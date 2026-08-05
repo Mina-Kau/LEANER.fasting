@@ -1,0 +1,1244 @@
+---
+title: "Fig. 4 - Maifeld validation"
+author: "Gelsomina Nicola Kaufhold"
+date: "2025-06-18"
+output: html_document
+---
+
+# Figure 4: Validation in independent studies: Maifeld
+
+
+# Load packages
+```{r message=FALSE, warning=FALSE}
+library(phyloseq)
+library(tidyverse)
+library(readxl)
+library(rstatix)
+library(dplyr)
+library(microbiome)
+library(coin)
+library(rstatix)
+library(caret)
+library(stats)
+
+boxplot.theme.legend <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black",angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "top")
+
+boxplot.theme <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+```
+
+
+# Load and prepare data
+```{r}
+PS.CORONA <- readRDS("rowdata/PS.CORONA.rds")
+# Visite should be used as factor
+sample_data(PS.CORONA)$Visite <- as.factor(sample_data(PS.CORONA)$Case)
+levels(sample_data(PS.CORONA)$Visite) <- c("1" = "baseline", "2" = "fasting", "3" = "follow-up")
+
+meta.corona <- data.frame(sample_data(PS.CORONA))
+
+meta.corona.red <- meta.corona %>%
+  select(Patient, Visite, age, sex, BMI, BP_sphygm_syst, BP_sphygm_diast, HDL, LDL)
+
+# calculate a variaty of diversity indices
+tab <- microbiome::alpha(PS.CORONA, index = "all") 
+
+# load meta data
+Samp <- sample_data(PS.CORONA)
+
+# merge with alpha diversity indicies
+samp_alpha_corona <- (merge(Samp, tab, by = 0))
+
+alpha.corona <- samp_alpha_corona %>%
+  select(Row.names, Patient, diversity_shannon) %>%
+  column_to_rownames(var = "Row.names")
+```
+
+## Defining responders
+```{r}
+meta.corona.baseline <- meta.corona %>%
+  filter(Visite == "baseline") %>%
+  rename(BMI.baseline = BMI)
+
+meta.corona.recovery <- meta.corona %>%
+  filter(Visite == "follow-up") %>%
+  select(Patient, BMI) %>%
+  rename(BMI.recovery = BMI)
+
+meta.corona.bmi <- meta.corona.baseline %>%
+  left_join(meta.corona.recovery, by = "Patient")
+
+meta.corona.bmi$bmi.change <- meta.corona.bmi$BMI.baseline - meta.corona.bmi$BMI.recovery
+
+obere.corona <- 0.8233315
+
+meta.corona.bmi$responder.calculated <- ifelse(meta.corona.bmi$bmi.change > obere.corona, "1", "0")
+```
+
+## Prepare data for making a prediction
+
+### Species abundance
+```{r}
+species <- tax_glom(physeq = PS.CORONA, taxrank = "Species")
+tax_table <- data.frame(tax_table(species))
+
+species <- tax_table %>%
+  select(Species) %>%
+  rownames_to_column(var = "motus")
+
+abundance.corona <- data.frame(otu_table(PS.CORONA))
+
+# assign the species names to the otus
+abundance.species <- abundance.corona %>%
+  rownames_to_column(var = "motus") %>%
+  left_join(species, by = "motus") %>%
+  replace_na(list(Species = "unassigned"))
+
+abundance.species$motus <- NULL
+
+# remove [....]
+abundance.species$Species <- gsub("\\[.*?\\]", "", abundance.species$Species)
+abundance.species$Species <- gsub("/.*", "", abundance.species$Species)
+# ensure that there is no extra space at the end
+abundance.species$Species <- trimws(abundance.species$Species)
+
+# sum the same species
+library(dplyr)
+abundance_species_sum <- abundance.species %>%
+  group_by(Species) %>%
+  dplyr::summarize(across(starts_with("Sample"), ~ sum(.x, na.rm = TRUE))) %>%
+  column_to_rownames(var = "Species") %>%
+  filter(rowSums(.) > 0)# Keep only rows with a non-zero sum
+
+
+species.corona <- abundance_species_sum
+
+###############
+##### call species of interest
+###################
+species <- data.frame(t(species.corona))
+species_int <- c("NA.Faecalibacterium.sp..CAG.74.", "NA.Clostridium.species.incertae.sedis", "Faecalibacterium.prausnitzii.1.", "NA Roseburia species incertae sedis", "NA.Faecalibacterium.species.incertae.sedis", "Oscillibacter sp. 57_20", "Faecalibacterium.prausnitzii", "Akkermansia.muciniphila..CAG.154.UNK.MGS.1.54_46.Phil8.", "NA.Prevotella.species.incertae.sedis", "NA.Prevotellaceae.species.incertae.sedis")
+
+species.int.corona <- c("NA.Faecalibacterium.species.incertae.sedis", "NA.Clostridiales.species.incertae.sedis", "Faecalibacterium.prausnitzii", "NA.Faecalibacterium.species.incertae.sedis", "NA.Roseburia.species.incertae.sedis", "Oscillibacter.sp..57_20", "Akkermansia.muciniphila", "NA.Prevotella.species.incertae.sedis", "NA.Bacteroides.rodentium")
+
+bact_int <- species %>%
+  select(species.int.corona) %>%
+  rename("Oscillibacter.sp..57_20." = "Oscillibacter.sp..57_20", "NA.Bacteroides.rodentium.uniformis." = "NA.Bacteroides.rodentium", "Akkermansia.muciniphila..CAG.154.UNK.MGS.1.54_46.Phil8." = "Akkermansia.muciniphila")
+```
+
+### combine with meta data
+```{r}
+meta.corona.model <- meta.corona.red %>%
+  rename(sys_mean = BP_sphygm_syst, bp_dia_mean = BP_sphygm_diast, hdl = HDL, ldl = LDL)
+
+corona.test.model <- cbind(bact_int, meta.corona.model)
+corona.baseline.model <- corona.test.model %>%
+  filter(Visite == "baseline")
+
+
+```
+
+## make prediciton
+```{r}
+model_short <- readRDS("rowdata/model.heilig.rds")
+predicted_corona <- predict(model_short, newdata = corona.baseline.model)
+print(predicted_corona)
+
+fit_b
+
+predicted_corona <- predict(model.short.no.ldl, newdata = corona.baseline.model)
+print(predicted_corona)
+
+
+
+## add prediction to data
+corona.baseline.model$responder.model <- predicted_corona
+
+corona.baseline.model <- corona.baseline.model %>%
+  mutate(responder.model =
+           recode(responder.model, 
+                  "NonResponder" = "non-responder",
+                            "Responder"    = "responder"))
+
+corona.responder <- corona.baseline.model %>%
+  select(Patient, responder.model)
+
+
+
+
+#####################################
+responder.true <- meta.corona.bmi %>%
+  select(Patient, responder.calculated) %>%
+  rename(responder.true = responder.calculated)
+
+corona.prediction <- corona.baseline.model %>%
+  left_join(responder.true, by = "Patient")
+
+
+corona.prediction$responder.true = factor(corona.prediction$responder.true, 
+                                          levels = c(0, 1), 
+                                          labels = c("non-responder", "responder"))
+
+
+```
+
+```{r}
+library(pROC)
+library(dplyr)
+
+library(pROC)
+
+# 1) get probabilities
+probs <- predict(final_fit_no_ldl, newdata = corona.prediction, type = "prob")
+
+# 2) add the responder probability to your dataset
+corona.prediction$prob_responder <- probs$responder
+
+# 3) make ROC and AUC
+roc_obj <- roc(corona.prediction$responder.true,
+               corona.prediction$prob_responder,
+               levels = c("non-responder","responder"))
+
+auc(roc_obj)
+plot(roc_obj, main = "ROC curve")
+
+```
+
+
+
+
+## do we see higher bmi loss in respondern?
+```{r}
+meta.corona.new <- meta.corona.bmi %>%
+  left_join(corona.responder, by = "Patient")
+
+meta.corona.new$responder.model <- factor(meta.corona.new$responder.model, 
+                                          levels = c("0", "1"), 
+                                          labels = c("non-responder", "responder"))
+
+
+meta.corona.new$responder.model <- factor(meta.corona.new$responder.model, 
+                                          levels = c("non-responder", "responder"))
+
+meta.corona.new$responder.calculated <- factor(meta.corona.new$responder.calculated, 
+                                               levels = c(0, 1),
+                                          labels = c("non-responder", "responder"))
+
+
+
+meta.corona.new %>%
+  ggplot(aes(x = responder.model, y = bmi.change, fill = responder.model)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.9) +
+  scale_fill_manual("", values = c("non-responder" ="#fc8d59", "responder" = "#998ec3")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  theme_classic() +
+  boxplot.theme.legend +
+  ylim(c(0, 6)) +
+  labs(y = "Δ BMI") -> fig.4.BMI.change.corona
+fig.4.BMI.change.corona
+ggsave("fig.4.BMI.change.corona.pdf", plot = fig.4.BMI.change.corona, width = 5, height = 5)
+#############
+#### statistics
+################
+meta.corona.new %>% 
+  wilcox_test(formula = bmi.change ~ responder.model, data = .)
+
+meta.corona.new %>% 
+  pairwise_wilcox_test(formula = bmi.change ~ responder.model,
+                       paired = FALSE)
+
+```
+
+## BMI changes in CORONA
+```{r}
+##### add predicted responder to all data
+meta.corona <- meta.corona %>%
+  left_join(corona.responder, by = "Patient")
+
+responder.calculated <-meta.corona.bmi %>%
+  select(Patient, responder.calculated)
+
+meta.corona <- meta.corona %>%
+  left_join(responder.calculated, by = "Patient")
+
+meta.corona$responder.model <- factor(meta.corona$responder.model, 
+                                          levels = c(0, 1), 
+                                          labels = c("non-responder", "responder"))
+
+meta.corona$responder.calculated <- factor(meta.corona$responder.calculated, 
+                                          levels = c(0, 1), 
+                                          labels = c("non-responder", "responder"))
+
+
+
+  
+meta.corona %>%
+  ggplot(aes(x = Visite, y = BMI, fill = responder.model)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "BMI") -> fig.4.bmi.CORONA.responder
+fig.4.bmi.CORONA.responder
+#ggsave("fig.4.bmi.CORONA.responder.pdf", plot = fig.4.bmi.CORONA.responder, width = 5, height = 5)
+```
+
+## Features splittet for non responder / responder
+
+### systolic Blood pressure
+```{r}
+meta.corona %>%
+  ggplot(aes(x = Visite, y = BP_sphygm_syst, fill = responder.model)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "sys BP") -> fig.4.sysBP.CORONA.responder
+fig.4.sysBP.CORONA.responder
+
+####################
+##### statistics
+#################
+####### differences at baseline
+meta.corona %>%
+  filter(Visite == "baseline") %>%
+  group_by(responder.model) %>%
+  dplyr::summarize(mean = mean(BP_sphygm_syst),
+            sd = sd(BP_sphygm_syst))
+
+meta.corona %>% 
+  filter(Visite == "baseline") %>%
+  pairwise_wilcox_test(
+    formula = BP_sphygm_syst ~ responder.model, 
+    paired = FALSE)
+
+######## changes over time
+###### non-responder
+meta.corona %>%
+  filter(responder.model == "non-responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(BP_sphygm_syst),
+            sd = sd(BP_sphygm_syst))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = BP_sphygm_syst ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+###### responder
+meta.corona %>%
+  filter(responder.model == "responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(BP_sphygm_syst),
+            sd = sd(BP_sphygm_syst))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "responder") %>%
+  pairwise_wilcox_test(
+    formula = BP_sphygm_syst ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+
+```
+
+### LDL
+```{r}
+meta.corona %>%
+  ggplot(aes(x = Visite, y = LDL, fill = responder.model)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "LDL") -> fig.4.LDL.CORONA.responder
+fig.4.LDL.CORONA.responder
+
+####################
+##### statistics
+#################
+####### differences at baseline
+meta.corona %>%
+  filter(Visite == "baseline") %>%
+  group_by(responder.model) %>%
+  dplyr::summarize(mean = mean(LDL),
+            sd = sd(LDL))
+
+meta.corona %>% 
+  filter(Visite == "baseline") %>%
+  pairwise_wilcox_test(
+    formula = LDL ~ responder.model, 
+    paired = FALSE)
+
+######## changes over time
+###### non-responder
+meta.corona %>%
+  filter(responder.model == "non-responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(LDL),
+            sd = sd(LDL))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = LDL ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+###### responder
+meta.corona %>%
+  filter(responder.model == "responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(LDL),
+            sd = sd(LDL))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "responder") %>%
+  pairwise_wilcox_test(
+    formula = LDL ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+```
+
+### Bacteria
+```{r}
+corona.bact <- corona.test.model %>%
+  rownames_to_column(var = "Samp")
+
+meta.corona <- meta.corona %>%
+  left_join(corona.bact, by = c("Patient", "Visite"))
+
+####################
+######### Oscilli
+##################
+meta.corona %>%
+  ggplot(aes(x = Visite, y = Oscillibacter.sp..57_20., fill = responder.model)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Abundance") -> fig.4.Oscilli.CORONA.responder
+fig.4.Oscilli.CORONA.responder
+
+####################
+##### statistics
+#################
+####### differences at baseline
+meta.corona %>%
+  filter(Visite == "baseline") %>%
+  group_by(responder.model) %>%
+  dplyr::summarize(mean = mean(Oscillibacter.sp..57_20.),
+            sd = sd(Oscillibacter.sp..57_20.))
+
+meta.corona %>% 
+  filter(Visite == "baseline") %>%
+  pairwise_wilcox_test(
+    formula = Oscillibacter.sp..57_20. ~ responder.model, 
+    paired = FALSE)
+
+######## changes over time
+###### non-responder
+meta.corona %>%
+  filter(responder.model == "non-responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(Oscillibacter.sp..57_20.),
+            sd = sd(Oscillibacter.sp..57_20.))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = Oscillibacter.sp..57_20. ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+###### responder
+meta.corona %>%
+  filter(responder.model == "responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(Oscillibacter.sp..57_20.),
+            sd = sd(Oscillibacter.sp..57_20.))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "responder") %>%
+  pairwise_wilcox_test(
+    formula = Oscillibacter.sp..57_20. ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+
+##########################
+########### Faecalibacterium
+############################
+meta.corona %>%
+  ggplot(aes(x = Visite, y = NA.Faecalibacterium.species.incertae.sedis, fill = responder.model)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Abundance") -> fig.4.Faecali.CORONA.responder
+fig.4.Faecali.CORONA.responder
+
+####################
+##### statistics
+#################
+####### differences at baseline
+meta.corona %>%
+  filter(Visite == "baseline") %>%
+  group_by(responder.model) %>%
+  dplyr::summarize(mean = mean(NA.Faecalibacterium.species.incertae.sedis),
+            sd = sd(NA.Faecalibacterium.species.incertae.sedis))
+
+meta.corona %>% 
+  filter(Visite == "baseline") %>%
+  pairwise_wilcox_test(
+    formula = NA.Faecalibacterium.species.incertae.sedis ~ responder.model, 
+    paired = FALSE)
+
+######## changes over time
+###### non-responder
+meta.corona %>%
+  filter(responder.model == "non-responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(NA.Faecalibacterium.species.incertae.sedis),
+            sd = sd(NA.Faecalibacterium.species.incertae.sedis))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = NA.Faecalibacterium.species.incertae.sedis ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+###### responder
+meta.corona %>%
+  filter(responder.model == "responder") %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(NA.Faecalibacterium.species.incertae.sedis),
+            sd = sd(NA.Faecalibacterium.species.incertae.sedis))
+
+complete_meta <- meta.corona %>% 
+  group_by(Patient) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  filter(responder.model == "responder") %>%
+  pairwise_wilcox_test(
+    formula = NA.Faecalibacterium.species.incertae.sedis ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+```
+
+### baseline only
+```{r}
+corona.baseline.model$responder <- factor(corona.baseline.model$responder,
+                                          levels = c(0,1), 
+                                          labels = c("non-responder", "responder"))
+corona.baseline.model %>%
+  filter(Visite == "baseline") %>%
+  ggplot(aes(x = responder, y = NA.Faecalibacterium.species.incertae.sedis, fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Abundance") -> fig.4.CORONA.faecali.baseline
+
+ fig.4.CORONA.faecali.baseline
+ggsave("fig.4.CORONA.faecali.baseline.pdf", plot =fig.4.CORONA.faecali.baseline, width = 3, height = 5)
+
+corona.baseline.model %>%
+  filter(Visite == "baseline") %>%
+  ggplot(aes(x = responder, y = Oscillibacter.sp..57_20., fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Abundance") -> fig.4.CORONA.Oscilli.baseline
+
+fig.4.CORONA.Oscilli.baseline
+ggsave("fig.4.CORONA.Oscilli.baseline.pdf", plot =fig.4.CORONA.Oscilli.baseline, width = 3, height = 5)
+
+corona.baseline.model %>%
+  filter(Visite == "baseline") %>%
+  ggplot(aes(x = responder, y = sys_mean, fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "sys BP (mmHg)") -> fig.4.CORONA.bp.baseline
+
+fig.4.CORONA.bp.baseline
+ggsave("fig.4.CORONA.bp.baseline.pdf", plot =fig.4.CORONA.bp.baseline, width = 3, height = 5)
+
+corona.baseline.model %>%
+  filter(Visite == "baseline") %>%
+  ggplot(aes(x = responder, y = ldl, fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "LDL (mg/dL)") -> fig.4.CORONA.ldl.baseline
+
+fig.4.CORONA.ldl.baseline
+ggsave("fig.4.CORONA.ldl.baseline.pdf", plot =fig.4.CORONA.ldl.baseline, width = 3, height = 5)
+
+CORONA.stats <- pivot_longer(corona.baseline.model, cols = c(sys_mean, ldl, Oscillibacter.sp..57_20., NA.Faecalibacterium.species.incertae.sedis), names_to = "feature", values_to = "value")
+CORONA.stats $feature <- as.factor(CORONA.stats$feature)
+CORONA.stats %>%
+  group_by(feature) %>%
+  pairwise_wilcox_test(formula = value ~ responder, paired = FALSE) -> CORONA.stats
+
+library(writexl)
+#write_xlsx(CORONA.stats, "CORONA.stats.xlsx")
+```
+
+
+### Changes in BMI
+```{r}
+meta.corona %>%
+  ggplot(aes(x = Visite, y = BMI.x, fill = responder.model)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "BMI") -> corona.responder.model.bmi
+corona.responder.model.bmi
+
+##### how much percent weight loss in respondern / non respondern
+bmi.baseline <- meta.corona %>%
+  select(Patient, SampleID, BMI.x, Visite, responder.model, responder.calculated) %>%
+  filter(Visite == "baseline") %>%
+  rename("BMI.baseline" = BMI.x)
+
+bmi.refeeding <- meta.corona %>%
+  select(Patient, SampleID, BMI.x, Visite, responder.model, responder.calculated) %>%
+  filter(Visite == "follow-up") %>%
+  rename("BMI.refeeding" = BMI.x)
+
+## join both cases
+bmi.dif <- bmi.baseline %>%
+  full_join(bmi.refeeding, by = "Patient") %>%
+  mutate(bmi.loss = abs(BMI.refeeding-BMI.baseline)) %>%
+  mutate(bmi.percent = (bmi.loss/BMI.baseline)*100)
+
+## responder model
+bmi.responder.model <- bmi.dif %>%
+  filter(responder.model.x == "responder")## 8 have higher bmi loss then 5%
+
+## responder calculated
+bmi.responder.calculated <- bmi.dif %>%
+  filter(responder.calculated.x == "responder") %>%
+  filter(bmi.percent > 5)
+
+
+
+####################
+##### statistics
+#################
+####### differences at baseline
+meta.corona %>%
+  filter(Visite == "baseline") %>%
+  group_by(responder.calculated) %>%
+  dplyr::summarize(mean = mean(BMI.x),
+            sd = sd(BMI.x))
+
+### differences at follow-up
+meta.corona %>%
+  filter(Visite == "follow-up") %>%
+  group_by(responder.calculated) %>%
+  dplyr::summarize(mean = mean(BMI.x),
+            sd = sd(BMI.x))
+
+
+## statistical test
+meta.corona %>%
+  group_by(Visite) %>%
+  pairwise_wilcox_test(BMI.x ~ responder.model, 
+                       paired = FALSE, 
+                       p.adjust.method = "BH")
+
+
+```
+
+
+## Test models performance
+
+### confusion matrix
+```{r}
+library(caret)
+meta.corona.new <- meta.corona.bmi %>%
+  left_join(corona.responder, by = "Patient")
+
+meta.corona.new$responder.model <- factor(meta.corona.new$responder.model, 
+                                          levels = c(0, 1), 
+                                          labels = c("non-responder", "responder"))
+
+meta.corona.new$responder.calculated <- factor(meta.corona.new$responder.calculated, 
+                                          levels = c(0, 1), 
+                                          labels = c("non-responder", "responder"))
+
+
+
+confusionMatrix(data = meta.corona.new$responder.model, reference =  meta.corona.new$responder.calculated, positive = "responder") -> confmat_CORONA
+confmat_CORONA
+
+
+############################
+######## Plot confusion matrix
+#############################
+library(scales)
+
+# Create confusion matrix
+conf_mat <- matrix(c(6, 1, 3, 13), nrow = 2, byrow = FALSE)
+rownames(conf_mat) <- c("non-responder", "responder")
+colnames(conf_mat) <- c("non-responder", "responder")
+
+# Convert matrix to data frame for plotting
+conf_mat_df <- as.data.frame.table(as.table(conf_mat))
+
+# Add color column based on whether the prediction is correct
+conf_mat_df$Color <- ifelse(conf_mat_df$Var1 == rownames(conf_mat) & conf_mat_df$Var2 == colnames(conf_mat), "Correct",
+                            ifelse(conf_mat_df$Freq == 0, "No Data", "Incorrect"))
+
+# Plot heatmap
+ggplot(conf_mat_df, aes(x = Var2, y = Var1, fill = Color)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = format(Freq, big.mark = ",")), color = "black", size = 8) +  # Format text with commas
+  scale_fill_manual("Prediction", values = c("Correct" = "#5ab4ac", "Incorrect" = "#e9a3c9", "No Data" = "white")) +
+  labs(x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 24),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24, color = "black", face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        panel.border = element_rect(color = "black", fill = NA,  size = 1),
+        legend.text = element_text(color = "black", size = 24),
+        legend.position = "top") -> fig.4.head.map.conf.matrix.CORONA 
+
+fig.4.head.map.conf.matrix.CORONA
+```
+
+### ROC curve
+```{r}
+predicted_probs <- predict(final_fit, newdata = corona.baseline.model, type = "prob")
+
+
+meta.corona.resp <- meta.corona.baseline %>%
+  rownames_to_column(var ="sample") %>%
+  left_join(corona.responder, by = "Patient") %>%
+  #rename(responder.model = responder) %>%
+  left_join(responder.calculated, by = "Patient")
+
+predicted_probs <- predicted_probs %>%
+  rownames_to_column(var = "sample")
+
+combined_data <- meta.corona.resp %>%
+  left_join(predicted_probs, by = "sample") %>%
+  column_to_rownames(var = "sample")
+  
+
+# Create a prediction object
+library(ROCR)
+pred <- prediction(combined_data$`1`, combined_data$responder.calculated)
+
+# Compute the performance measures
+perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+
+# Extract the data for plotting
+roc_data <- data.frame(
+  FPR = perf@x.values[[1]],
+  TPR = perf@y.values[[1]],
+  Cutoff = perf@alpha.values[[1]]
+)
+
+# Calculate and print the AUC
+auc <- performance(pred, measure = "auc")
+auc <- auc@y.values[[1]]
+print(paste("Area Under the ROC Curve:", round(auc, 2)))
+
+# Plot the ROC curve
+
+ggplot(roc_data, aes(x = FPR, y = TPR)) +
+  geom_line(size = 1, color = "steelblue") +
+  geom_abline(linetype = "dashed", color = "red") +  # Add diagonal line
+  annotate("text", x = 0.6, y = 0.2, label = paste("AUC =", round(auc, 2)), size = 5) +
+  scale_x_continuous(limits = c(0, 1), expand = c(0, 0), name = "1 - specifity") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0), name = "sensitivity") +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        axis.line = element_blank(),
+        axis.ticks = element_line(color = "black"),
+        panel.border = element_rect(linewidth = 1, fill = NA)) -> fig.4.ROC.CORONA.no.confidence
+fig.4.ROC.CORONA.no.confidence
+ggsave("fig.4.ROC.CORONA.no.confidence.pdf", plot = fig.4.ROC.CORONA.no.confidence, width = 5, height = 4)
+```
+
+### ROC curve with confidence intervall
+```{r}
+library(pROC)
+combined_data$responder.calculated <- factor(combined_data$responder.calculated, 
+                                             levels = c(0, 1),
+                                             labels = c("non-responder", "responder"))
+roc_obj <- roc(response = combined_data$responder.calculated,
+               predictor = combined_data$`1`,
+               levels = c("non-responder", "responder"),  
+               direction = "<",
+               drop.intermediate = FALSE) 
+
+
+ci_obj <- ci.se(roc_obj, specificities = seq(0, 1, by = 0.01))
+
+# Extract the data for plotting
+ci_df <- data.frame(
+  specificity = as.numeric(rownames(ci_obj)),
+  TPR         = ci_obj[, "50%"],      # median TPR at each specificity
+  TPR_lower   = ci_obj[, "2.5%"],     # lower 95% CI
+  TPR_upper   = ci_obj[, "97.5%"]     # upper 95% CI
+)
+
+# Convert specificity -> FPR for plotting
+ci_df$FPR <- 1 - ci_df$specificity
+
+
+library(ggplot2)
+ggplot(ci_df, aes(x = FPR, y = TPR)) +
+  geom_ribbon(aes(ymin = TPR_lower, ymax = TPR_upper),
+              fill = "red", alpha = 0.2) +
+  geom_line(color = "red", size = 1.2) +
+  geom_abline(linetype = "dashed") +
+  scale_x_continuous(limits = c(0, 1), name = "1 - Specificity") +
+  scale_y_continuous(limits = c(0, 1), name = "Sensitivity") + 
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        axis.line = element_blank(),
+        axis.ticks = element_line(color = "black"),
+        panel.border = element_rect(linewidth = 1, fill = NA)) -> fig.4.ROC.CORONA.with.confintervall
+ fig.4.ROC.CORONA.with.confintervall
+```
+
+### Correlation of selection features
+```{r}
+library(corrplot)
+library(Hmisc)
+corona.baseline.model
+
+# select feature for correlation matrix
+cor_features <- corona.baseline.model %>% 
+  select(Oscillibacter.sp..57_20.,
+         NA.Faecalibacterium.species.incertae.sedis,
+         sys_mean,
+         ldl,
+         BMI)
+
+cor_names <- cor_features
+colnames(cor_features) <- c("Oscilli sp.\n57_20", 
+           "Faecali sp.\nincertae sedis", 
+           "Sys BP", 
+           "LDL", 
+           "BMI")
+
+cor_test_result <- rcorr(as.matrix(cor_features, type = "spearman"))  
+
+
+print(cor_test_result$r)  # Correlation matrix
+print(cor_test_result$P) # Matrix with p valies
+cor_test_result$P[is.na(cor_test_result$P)] <- 1 # Matrix of p-values
+
+# Extract the correlation matrix (r) and p-value matrix (P)
+cor_matrix <- cor_test_result$r  
+p_matrix <- cor_test_result$P    
+corrplot(cor_matrix, 
+         type = "upper",         
+         order = "hclust",       
+         p.mat = p_matrix,       
+         sig.level = 0.05,       
+         insig = "blank") 
+
+#svg("fig.4.corrplot.CORONA.significant.only.svg", width = 8, height = 8)
+corrplot(cor_matrix, 
+         type = "upper",         
+         order = "hclust",       
+         p.mat = p_matrix,       
+         sig.level = 0.05,       
+         insig = "blank",        
+         tl.col = "black",       
+         tl.srt = 45,            
+         tl.cex = 0.8,           
+         cl.cex = 0.8,           
+         addCoef.col = "black",  
+         number.cex = 0.7,       
+         col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(100), 
+         mar = c(0, 0, 1, 0))
+#dev.off()
+
+#svg("fig.4.corrplot.CORONA.svg", width = 8, height = 8)
+corrplot(cor_matrix, type = "upper", order = "hclust", 
+         tl.col = "black", tl.cex = 1.5, cl.cex = 1.3,
+         number.cex = 1.5)
+#dev.off()
+
+
+###### square plot
+library(ggcorrplot)
+cor_matrix <- cor_test_result$r
+p_matrix <- cor_test_result$P
+p_matrix[is.na(p_matrix)] <- 1  # Set NA p-values to 1 (non-significant)
+
+# Plot
+fig.4.CORONA.heatmap <- ggcorrplot(cor_matrix,
+           method = "square",        
+           type = "upper",           
+           lab = TRUE,               # Show correlation numbers
+           lab_size = 6,             # Correlation number size (~24 pt)
+           colors = c("#0075DC", "white", "#E64B35FF"),  
+           tl.cex = 1.5,             # Axis label size (~24 pt)
+           legend.title = "Corr",    # Optional: set a custom legend title
+           ggtheme = theme_minimal(base_size = 24)) +  # Base text size 24
+  theme(legend.text = element_text(size = 20),
+        legend.title = element_text(size = 24),
+        axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        plot.title = element_text(size = 24))
+
+fig.4.CORONA.heatmap
+#ggsave("fig.4.CORONA.heatmap.pdf", plot = fig.4.CORONA.heatmap, width = 8, height = 8)
+```
+
+
+# Rerun the model in the CORONA dataset
+What are the important features here?
+```{r}
+species.corona
+meta.corona
+
+## species of interest
+species <- data.frame(t(species.corona))
+species_int <- c("NA.Faecalibacterium.sp..CAG.74.", "NA.Clostridium.species.incertae.sedis", "Faecalibacterium.prausnitzii.1.", "NA Roseburia species incertae sedis", "NA.Faecalibacterium.species.incertae.sedis", "Oscillibacter sp. 57_20", "Faecalibacterium.prausnitzii", "Akkermansia.muciniphila..CAG.154.UNK.MGS.1.54_46.Phil8.", "NA.Prevotella.species.incertae.sedis", "NA.Prevotellaceae.species.incertae.sedis")
+
+species.int.corona <- c("NA.Faecalibacterium.species.incertae.sedis", "NA.Clostridiales.species.incertae.sedis", "Faecalibacterium.prausnitzii", "NA.Faecalibacterium.species.incertae.sedis", "NA.Roseburia.species.incertae.sedis", "Oscillibacter.sp..57_20", "Akkermansia.muciniphila", "NA.Prevotella.species.incertae.sedis", "NA.Bacteroides.rodentium")
+
+## what are the 50 most abundant species?
+bact <- data.frame(t(species.corona))
+features <- bact
+index.keep.1 <- features[, colSums(features)!=0] 
+index.keep_t = t(index.keep.1)
+index.keep.50 <- index.keep_t[names(sort(rowSums(index.keep_t), decreasing = TRUE)[1:50]), ]
+index.keep.50 <- as.data.frame(t(index.keep.50))
+top50 <- colnames(index.keep.50)
+bacteria_top50 <- bact %>%
+  select(species.int.corona, top50)
+
+#### Bind to meta data
+meta.int <- meta.corona %>%
+  select(BMI, body_fat_ratio, HDL, LDL, LDL_HDL_ratio, triglycerol, Visite, responder.calculated)
+
+class_data <- cbind(meta.int, bacteria_top50)
+
+class_data <- class_data %>%
+  filter(Visite == "baseline") %>%
+  select(!Visite)
+```
+
+Train the model 
+```{r}
+## ===============================
+## Random Forest: Repeated CV + Nested CV (caret)
+## ===============================
+
+library(tidyverse)
+library(caret)
+library(pROC)
+library(randomForest)
+
+
+#####################
+####### Repeated 80/20 with inner CV
+#############################
+# Outer split: random 80% train / 20% test, repeated 100 times.
+# Inner CV: 5-fold inside each 80% to pick the best mtry.
+# What you get: a distribution of performance (median, IQR), showing stability/variance across many random splits.
+# → Answers “Could our result be a lucky split?”
+
+
+set.seed(42)
+
+## ---- 0) DATA PREP (expects df with responder_mean + predictors) ----
+# Ensure: (i) no IDs/text columns, (ii) two-class factor with valid names, (iii) positive class first (necessary for ROC)
+df <- class_data
+dat <- df %>%
+  mutate(
+    responder.calculated = factor(
+      ifelse(as.character(responder.calculated) %in% c("1", 1, "responder"),
+             "Responder", "NonResponder"),
+      levels = c("Responder", "NonResponder")
+    )
+  ) %>%
+  drop_na()
+
+# number of predictors
+p <- ncol(dat) - 1
+
+##############################################
+## ---- 1) Helper: robust varImp extractor (builds an Overall column)
+#####################################
+### after training the model, this function pulls variable importance from caret::varImp() and returns a table with feature, its importance and how often it came up (iter)
+
+get_vi <- function(fit, iter_or_fold){
+  vi_obj <- caret::varImp(fit, scale = FALSE)
+  imp_raw <- tryCatch(vi_obj$importance, error = function(e) as.data.frame(vi_obj))
+  imp_df <- as.data.frame(imp_raw)
+
+  if(!"Overall" %in% colnames(imp_df)){
+    if(ncol(imp_df) > 1){
+      imp_df$Overall <- rowMeans(imp_df, na.rm = TRUE)
+    } else {
+      colnames(imp_df) <- "Overall"
+    }
+  }
+
+  tibble(
+    Feature    = rownames(imp_df),
+    Importance = imp_df[ , "Overall", drop = TRUE],
+    iter       = iter_or_fold
+  )
+}
+
+
+#######################################
+## ---- 2) Common training controls & grid ----
+##########################################
+# mtry is the RF hyperparameter (how many features are considered at each split)
+# inner 5-fold CV = we try different mtry values and pick the one with the best ROC
+
+rf_ntree <- 1000
+rf_grid  <- expand.grid(mtry = seq(1, min(p, floor(sqrt(p)) + 2), by = 1))
+
+ctrl_inner <- trainControl(
+  method = "cv", number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final",
+  allowParallel = TRUE
+)
+
+##########################
+## A) Repeated 80/20 Monte-Carlo CV (FULL MODEL)
+#########################
+# we do the resampling for 100 times
+
+B <- 100
+metrics_mc  <- vector("list", B)
+imp_mc_list <- vector("list", B)
+
+for(b in seq_len(B)){
+  # stratified 80/20 split
+  tr_idx <- createDataPartition(dat$responder.calculated, p = 0.8, list = FALSE)
+  tr <- dat[tr_idx, ]
+  te <- dat[-tr_idx, ]
+
+  # train on 80% with inner CV (optimize ROC)
+  fit_b <- train(
+    responder.calculated ~ .,
+    data = tr,
+    method = "rf",
+    metric = "ROC",
+    trControl = ctrl_inner,
+    tuneGrid = rf_grid,
+    ntree = rf_ntree,
+    importance = TRUE
+  )
+
+  # predict probs on held-out 20%
+  prob <- predict(fit_b, newdata = te, type = "prob")[, "Responder"]
+  pred <- factor(ifelse(prob >= 0.5, "Responder", "NonResponder"),
+                 levels = c("Responder", "NonResponder"))
+
+  # metrics (positive class = Responder)
+  roc_obj <- pROC::roc(response = te$responder.calculated,
+                       predictor = prob,
+                       levels = c("NonResponder","Responder"),
+                       direction = "<")
+  cm <- caret::confusionMatrix(pred, te$responder.calculated, positive = "Responder")
+
+  metrics_mc[[b]] <- tibble(
+    iter      = b,
+    AUC       = as.numeric(pROC::auc(roc_obj)),
+    Accuracy  = as.numeric(cm$overall["Accuracy"]),
+    Sensitivity = as.numeric(cm$byClass["Sensitivity"]),
+    Specificity = as.numeric(cm$byClass["Specificity"]),
+    Best_mtry = fit_b$bestTune$mtry
+  )
+
+  imp_mc_list[[b]] <- get_vi(fit_b, b)
+}
+
+### summary of the result, save AUC. Accuaracy, Sensitivity, Specificity and which mtry was chosen
+mc_metrics     <- bind_rows(metrics_mc)
+mc_importance  <- bind_rows(imp_mc_list)
+
+## Summaries you can report (median/IQR over repeats)
+## gives median and IQR of the key metrics across the 100 repeats → this shows typical performance and its spread.
+mc_summary <- mc_metrics %>%
+  summarise(
+    AUC_median = median(AUC, na.rm=TRUE),
+    AUC_IQR_L  = quantile(AUC, 0.25, na.rm=TRUE),
+    AUC_IQR_U  = quantile(AUC, 0.75, na.rm=TRUE),
+    Acc_median = median(Accuracy, na.rm=TRUE),
+    Sens_median= median(Sensitivity, na.rm=TRUE),
+    Spec_median= median(Specificity, na.rm=TRUE)
+  )
+print(mc_summary)
+
+
+## Feature stability: Top-k frequency across repeats
+# median and IQR of the key metrics across the 100 repeats → this shows typical performance and its spread.
+k <- 5
+mc_stability <- mc_importance %>%
+  group_by(iter) %>%
+  slice_max(order_by = Importance, n = k, with_ties = FALSE) %>%
+  ungroup() %>%
+  count(Feature, name = "TopK_hits") %>%
+  arrange(desc(TopK_hits)) %>%
+  mutate(TopK_freq = TopK_hits / B)
+mc_stability %>% print(n = 30)
+
+mc_stability
+
+# Mean importance across repeats (helps ranking)
+mc_mean_importance_short <- mc_importance %>%
+  group_by(Feature) %>%
+  summarise(MeanImportance = mean(Importance, na.rm=TRUE),
+            SDImportance   = sd(Importance, na.rm=TRUE)) %>%
+  arrange(desc(MeanImportance))
+
+mc_mean_importance_short
+```
+
+
+## Is LDL alone associated with the outcome?
+Fit an univariate logistic regression as a control
+
+```{r}
+glm.data <- combined_data
+glm.data$responder.model <- NULL
+glm.data$Responder <- NULL
+glm.data$NonResponder <- NULL
+
+glm.data <- glm.data %>%
+  filter(Visite == "baseline")
+
+glm.data$responder.calculated <- factor(glm.data$responder.calculated, 
+                                        levels = c(0,1), 
+                                        labels = c("non-responder", "responder"))
+
+glm_ldl <- glm(responder.calculated ~ LDL, data = glm.data, family = binomial())
+prob_ldl <- predict(glm_ldl, type = "response")
+roc_ldl  <- roc(glm.data$responder.calculated, prob_ldl,
+                levels=c("non-responder","responder"), direction="<")
+auc_ldl  <- as.numeric(auc(roc_ldl))
+cat("External univariate LDL AUC:", round(auc_ldl,3), "\n")
+
+
+####### plot the ROC curve
+# ROC curve for univariate LDL logistic regression
+plot(roc_ldl, 
+     col = "blue", lwd = 2,
+     main = "ROC curve: LDL-only logistic regression (Maifeld dataset)")
+
+# Add diagonal line = random chance
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+# Add AUC to the plot
+auc_val <- auc(roc_ldl)
+legend("bottomright", 
+       legend = paste("AUC =", round(auc_val, 2)), 
+       col = "blue", lwd = 2, bty = "n")
+
+```
+
+
+
+
+
+
+

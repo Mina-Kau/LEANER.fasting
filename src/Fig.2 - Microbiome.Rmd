@@ -1,0 +1,1803 @@
+---
+title: "Fig.2 - Microbiome"
+author: "Gelsomina Nicola Kaufhold"
+date: "2025-06-18"
+output: html_document
+---
+
+# Figure 2: Microbial changes due fasting
+
+# Preperation
+
+## Loading required packages
+```{r message=FALSE, warning=FALSE}
+library(phyloseq)
+library(tidyverse)
+library(rstatix)
+library(coin)
+library(microbiome)
+library(ggpubr)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+```
+
+## Load themes and colors
+```{r}
+boxplot.theme.legend <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black",angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "top")
+
+boxplot.theme <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+
+boxplot.theme.2 <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+
+########################################
+### setting colors
+#########################################
+
+color.scale.4 <- scale_fill_manual(values = c(
+  "baseline 0" = "#FFD700",  # Baseline 0
+  "baseline 1" = "#E69F00",    # Baseline 1
+  "fasting" = "#CC79A7",     # Fasting
+  "follow-up" = "#0072B2"    # Follow-up
+))
+
+color.scale.3 <- scale_fill_manual(values = c(
+  "baseline 1" = "#E69F00",    # Baseline 1
+  "fasting" = "#CC79A7",     # Fasting
+  "follow-up" = "#0072B2"    # Follow-up
+))
+
+color.fill.sex <- scale_fill_manual(values = c(
+  "male" = "#998ec3",    
+  "female" = "#5ab4ac"))
+```
+
+## Load and prepare data
+```{r}
+######################
+# Load and prepare phyloseq object
+######################
+
+PS.tree <- readRDS("rowdata/PS.tree.rds")
+
+# Changing Geschlecht into Sex
+colnames(sample_data(PS.tree))[colnames(sample_data(PS.tree)) == "Geschlecht"] <- "Sex"
+
+# Defining Sex into factors
+sample_data(PS.tree)$Sex<- as.factor(sample_data(PS.tree)$Sex)
+levels(sample_data(PS.tree)$Sex) <- c("0" = "female", "1" = "male")
+sample_data(PS.tree)$Visite<- as.factor(sample_data(PS.tree)$Visite)
+levels(sample_data(PS.tree)$Visite) <- c("2" = "baseline 1", "3" = "fasting", "4" = "follow-up")
+
+otu_table_1 <- as.data.frame(otu_table(PS.tree))
+sample_table_1 <- as.data.frame(sample_data(PS.tree))
+tax_table_1 <- as.data.frame(tax_table(PS.tree))
+
+
+#saveRDS(PS.tree, file = "rowdata/PS.tree.rds")
+```
+
+# Microbial changes to fasting
+
+## Alpha diversity
+
+What are the changes in species diversity due to the fasting intervention?
+
+```{r message=FALSE, warning=FALSE}
+# calculate a variaty of diversity indices
+tab <- microbiome::alpha(PS.tree, index = "all") 
+
+#####################
+## Species richness
+####################
+tab_richness <- richness(PS.tree)
+Samp <- sample_data(PS.tree)
+samp_richness <- (merge(Samp, tab_richness, by = 0))
+
+samp_richness %>%
+  ggplot(aes(x = Visite, y = chao1, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  color.scale.3 +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  boxplot.theme +
+  labs(y = "Chao 1 index") -> fig.2.chao1.fasting
+fig.2.chao1.fasting
+
+
+#### statistics for chao 1 index
+samp_richness %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(chao1),
+            sd = sd(chao1))
+
+complete_alpha <- samp_richness %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_alpha %>% 
+  pairwise_wilcox_test(
+    formula = chao1 ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+
+###################
+## Alpha diversity
+###################
+
+### three timepoints
+samp_alpha <- (merge(Samp, tab, by = 0))
+
+samp_alpha %>%
+  ggplot(aes(x = Visite, y = diversity_shannon, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  color.scale.3 +
+  geom_point(position = position_jitter(width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  labs(y = "Shannon diversity") -> fig.2.shannon.plot
+fig.2.shannon.plot
+
+
+#### statistics for alpha diversity
+
+samp_alpha %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(diversity_shannon),
+            sd = sd(diversity_shannon))
+
+
+complete_alpha <- samp_alpha %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_alpha %>% 
+  pairwise_wilcox_test(
+    formula = diversity_shannon ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+#######################
+#### Simpson index
+####################
+samp_alpha %>%
+  ggplot(aes(x = Visite, y = diversity_inverse_simpson, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  color.scale.3 +
+  geom_point(position = position_jitter(width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  labs(y = "inverse simpson index") -> fig.2.simpson.plot
+fig.2.simpson.plot
+
+#### statistics
+samp_alpha %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(diversity_inverse_simpson),
+            sd = sd(diversity_inverse_simpson))
+
+complete_alpha <- samp_alpha %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_alpha %>% 
+  pairwise_wilcox_test(
+    formula = diversity_inverse_simpson ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+```
+
+## Dependencies of changes in alpha diversity from baseline alpha diversity
+```{r message=FALSE, warning=FALSE}
+###################
+### Prepare data
+#################
+
+# separate baseline alpha diversity at baseline and fasting
+samp_alpha_baseline <- samp_alpha %>%
+  filter(Visite == "baseline 1") %>%
+  select(Probanden_ID, diversity_shannon, Sex) %>%
+  rename(diversity_shannon_baseline = diversity_shannon)
+
+samp_alpha_fasting <- samp_alpha %>%
+  filter(Visite == "fasting") %>%
+  select(Probanden_ID, diversity_shannon, Sex, BMI) %>%
+  rename(diversity_shannon_fasting = diversity_shannon)
+
+samp_alpha_joined <- samp_alpha_baseline %>%
+  full_join(samp_alpha_fasting, by = "Probanden_ID") %>%
+  rename(Sex = Sex.x) %>%
+  select(-Sex.y)
+
+# create da datafroma which contains the differences in alpha diversity from baseline to fasting (change_fasting)
+samp_alpha_joined <- samp_alpha_joined %>%
+  mutate(change_fasting = diversity_shannon_fasting - diversity_shannon_baseline)
+
+
+################################################################################
+###### create model to check influence of features on change in alpha diversity
+################################################################################
+lm(change_fasting ~ diversity_shannon_baseline + Sex +BMI, data = samp_alpha_joined) -> alpha.baseline.sex.bmi
+summary(alpha.baseline.sex.bmi) # this result suggest that baseline diversity significantly influences the change in fasting diversity while the effect of sex is not significant after accounting for baseline diversity
+
+## check weather baseline has an influence
+lm(change_fasting ~ diversity_shannon_baseline, data = samp_alpha_joined) -> alpha.baseline
+summary(alpha.baseline) # this result suggest that baseline diversity significantly influences the change in fasting diversity
+
+## check weather sex has an influence
+lm(change_fasting ~ Sex, data = samp_alpha_joined) -> alpha.sex
+summary(alpha.sex) #The change in fasting diversity is not significantly influenced by sex alone after adjusting for baseline diversity.
+
+# check weather BMI has an inflience
+lm(change_fasting ~ diversity_shannon_baseline + BMI, data = samp_alpha_joined) -> alpha.baseline.BMI
+summary(alpha.baseline.BMI)
+
+#### summary of the statistics: changes uppon fasting ####
+model.1.fasting <- tidy(alpha.baseline.sex.bmi)
+model.2.fasting <- tidy(alpha.baseline)
+model.3.fasting <- tidy(alpha.sex)
+
+rbind(model.1.fasting, model.2.fasting, model.3.fasting) -> summary.model.fasting
+summary.model.fasting
+#In summary, while baseline diversity significantly affects the change in fasting diversity, the effect of sex is not significant once baseline diversity is taken into account. Therefore, the primary factor driving the change in fasting diversity appears to be the initial baseline diversity level.
+
+##############################
+####### Plot linear correlation
+###############################
+
+##### between shannon baseline alpha diversity and change of shannon diversity
+samp_alpha_joined %>%
+  ggplot(aes(x = diversity_shannon_baseline, y = change_fasting)) +
+  geom_jitter(size = 3, alpha = 0.7) +  # Increase point size and add transparency
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  labs(y = "Δ baseline - fasting", x = "baseline") +
+  ylim(-1, 2.5) +
+  xlim(1.5, 4.75) +
+  stat_cor(label.x = 2.8, label.y = 2, size = 7) +  # Add R² value to the plot
+  theme(axis.text = element_text(size = 24, color = "black"),  # Adjust axis label size
+        axis.title = element_text(size = 24),
+        panel.border = element_rect(color = "black", fill = NA, size = 1),
+        axis.line = element_blank()) -> figure3.lm.fasting.plot
+figure3.lm.fasting.plot
+
+cor(samp_alpha_joined$diversity_shannon_baseline, samp_alpha_joined$change_fasting)
+
+####### add overall changes in alpha diversity
+samp_alpha_recovery <- samp_alpha %>%
+  filter(Visite == "follow-up") %>%
+  select(Probanden_ID, diversity_shannon, Sex, BMI) %>%
+  rename(diversity_shannon_recovery = diversity_shannon)
+
+samp_alpha_joined <- samp_alpha_joined %>%
+  full_join(samp_alpha_recovery, by = "Probanden_ID") %>%
+  rename(Sex = Sex.x) %>%
+  select(-Sex.y)
+
+samp_alpha_joined <- samp_alpha_joined %>%
+  mutate(change_recovery = diversity_shannon_recovery - diversity_shannon_fasting) %>%
+  mutate(change_overall = diversity_shannon_recovery -diversity_shannon_baseline)
+
+## plot correlation of overall changes in alpha diversity and shannon baseline diversity
+lm(change_overall ~ diversity_shannon_baseline, data = samp_alpha_joined) -> lm.overall
+summary(lm.overall)
+
+samp_alpha_joined %>%
+  ggplot(aes(x = diversity_shannon_baseline, y = change_overall)) +
+  geom_jitter(size = 3, alpha = 0.7) +  # Increase point size and add transparency
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  labs(y = "Δ baseline - follow-up", x = "baseline") +
+  ylim(-1, 2.5) +
+  xlim(1.5, 4.75) +
+  stat_cor(label.x = 2.8, label.y = 2, size = 7) +  # Add R² value to the plot
+  theme(axis.text = element_text(size = 24, color = "black"),  # Adjust axis label size
+        axis.title = element_text(size = 24),
+        panel.border = element_rect(color = "black", fill = NA, size = 1),
+        axis.line = element_blank()) -> figure3.lm.alpha.overall.plot
+figure3.lm.alpha.overall.plot
+
+```
+
+## Changes in composition
+
+### Beta diversity
+```{r}
+#################
+###### Plot
+################
+
+PS.tree <- readRDS("rowdata/PS.tree.rds")
+dist_matrix <- distance(PS.tree, method = "bray")
+pcoa <- cmdscale(dist_matrix)
+Samp <- data.frame(sample_data(PS.tree))
+Samp <- merge(Samp, pcoa, by = 0)
+row.names(Samp) <- Samp$Row.names
+Samp$Row.names <- NULL
+
+centroids <- aggregate(cbind(V1, V2) ~ Visite, Samp, mean)
+
+fig.2.bray.curtis <- ggplot(Samp, aes(x = V1, y = V2)) +
+  stat_ellipse(
+    aes(color = Visite, fill = Visite),
+    geom = "polygon",
+    alpha = 0.1,
+    level = 0.95,
+    linetype = 1
+  ) +
+  geom_point(aes(color = Visite), size = 3, alpha = 0.7) +
+  geom_point(
+    data = centroids,
+    aes(fill = Visite),
+    size = 7,         # Bigger centroids
+    shape = 21,       # Shape that supports both fill and outline
+    color = "black"   # Outline
+  ) +
+  scale_color_manual("Visite",
+    values = c("baseline 1" = "#E69F00", 
+               "fasting"    = "#CC79A7", 
+               "follow-up"  = "#0072B2")
+  ) +
+  scale_fill_manual("Visite",
+    values = c("baseline 1" = "#E69F00", 
+               "fasting"    = "#CC79A7", 
+               "follow-up"  = "#0072B2")
+  ) +
+  xlab("Bray-Curtis distance V1") +
+  ylab("Bray-Curtis distance V2") +
+  theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "top")
+
+fig.2.bray.curtis
+
+######################
+###### statistics ####
+#####################
+
+# Calculating bray_curtis_dist
+bray_curtis_dist <- distance(PS.tree, method = "bray")
+
+#per_bray <- adonis(bray_curtis_dist ~ Visite + Sex + Probanden_ID + koerpergewicht + BMI, data = Samp,  strata = Samp$Probanden_ID)
+adonis2(
+  bray_curtis_dist ~ Visite + Sex + koerpergewicht + BMI,
+  data = Samp,
+  strata = Samp$Probanden_ID,
+  by = "margin"
+)
+
+### test different interactions
+##############################
+## baseline and fasting only
+#############################
+PS.tree_fasting <- subset_samples(PS.tree, Visite != "follow-up")
+bray_curtis_fasting <- distance(PS.tree_fasting, method = "bray")
+Samp_fasting <- data.frame(sample_data(PS.tree)) %>%
+  filter(Visite != "follow-up")
+
+perm_fasting <- adonis(bray_curtis_fasting ~ Visite * Sex, data = Samp_fasting,  strata = Samp_fasting$Probanden_ID) # the interaction is not significant
+perm_fasting$aov.tab
+perm_fasting <- adonis(bray_curtis_fasting ~ Visite + Sex, data = Samp_fasting,  strata = Samp_fasting$Probanden_ID) # the interaction is not significant
+perm_fasting$aov.tab
+perm_fasting <- adonis(bray_curtis_fasting ~ Visite, data = Samp_fasting,  strata = Samp_fasting$Probanden_ID) 
+adonis2(bray_curtis_fasting ~ Visite, data = Samp_fasting,  strata = Samp_fasting$Probanden_ID) # the changes from baseline to fasting are significant
+perm_fasting$aov.tab
+perm_fasting <- adonis(bray_curtis_fasting ~ Sex, data = Samp_fasting,  strata = Samp_fasting$Probanden_ID)
+perm_fasting$aov.tab
+
+##############################
+#### fasting and recovery only
+##############################
+PS.tree_recovery <- subset_samples(PS.tree, Visite != "baseline 1")
+bray_curtis_recovery <- distance(PS.tree_recovery, method = "bray")
+
+Samp_recovery <- data.frame(sample_data(PS.tree)) %>%
+  filter(Visite != "baseline 1")
+
+perm_recovery <- adonis(bray_curtis_recovery ~ Visite * Sex, data = Samp_recovery,  strata = Samp_recovery$Probanden_ID) # the interaction is not significant
+perm_recovery$aov.tab
+perm_recovery <- adonis(bray_curtis_recovery ~ Visite + Sex, data = Samp_recovery,  strata = Samp_recovery$Probanden_ID) # the interaction is not significant
+perm_recovery$aov.tab
+
+perm_recovery <- adonis(bray_curtis_recovery ~ Visite + BMI, data = Samp_recovery,  strata = Samp_recovery$Probanden_ID) # the interaction is not significant
+perm_recovery$aov.tab
+
+perm_recovery <- adonis(bray_curtis_recovery ~ Visite, data = Samp_recovery,  strata = Samp_recovery$Probanden_ID)
+adonis2(bray_curtis_recovery ~ Visite, data = Samp_recovery,  strata = Samp_recovery$Probanden_ID)# the changes from fasting to follow-up are significant
+perm_recovery$aov.tab
+
+##############################
+#### fasting and follow-up only
+##############################
+PS.tree_overall <- subset_samples(PS.tree, Visite != "fasting")
+bray_curtis_overall <- distance(PS.tree_recovery, method = "bray")
+
+Samp_overall<- data.frame(sample_data(PS.tree_overall)) %>%
+  filter(Visite != "fasting")
+
+perm_overall <- adonis(bray_curtis_overall ~ Visite, data = Samp_overall,  strata = Samp_overall$Probanden_ID) # the changes from fasting to follow-up are significant
+adonis2(bray_curtis_overall ~ Visite, data = Samp_overall,  strata = Samp_overall$Probanden_ID)
+perm_overall$aov.tab
+```
+
+
+### Trajectorie plots
+```{r}
+Samp <- data.frame(meta(PS.tree))
+bray <- distance(PS.tree, method = "bray")
+pcoa <- cmdscale(bray)
+Samp <- merge(Samp, pcoa, by = 0)
+
+time_a <- Samp[Samp$Visite == "baseline 1", ]
+time_b <- Samp[Samp$Visite == "fasting", ]
+time_c <- Samp[Samp$Visite == "follow-up", ]
+
+# join df zu einem df 
+all <- merge(time_a, time_b, by = "Probanden_ID", all = TRUE, suffixes = c(".a",".b"))
+
+
+center <- all
+for (i in c("V1.a","V1.b")){
+  center[,i] <- (all[, i] - all[, "V1.a"])
+}
+for (i in c("V2.a","V2.b")){
+  center[,i] <- (all[, i] - all[, "V2.a"])
+}
+center <- center[, c("V1.a","V1.b","V2.a","V2.b", "Probanden_ID")]
+center <- na.exclude(center)
+
+
+arrowCentroids <- as.data.frame(matrix(c(mean(center$V1.b),
+                                         mean(center$V2.b), 
+                                         center$V1.a[1], center$V2.a[1]), ncol = 4))
+
+# plot centered 
+plot_all <- ggplot(center, aes(x = V1.a, y = V2.a)) +
+  geom_point(data = center, aes(x = V1.a, y = V2.a), size = 4, alpha = 0.8) + 
+  theme_classic() +
+  geom_point(data = center, aes(x = V1.b, y = V2.b), color = "#CC79A7", size = 3, alpha = 0.3) +
+  # geom_point(data = center, aes(x = V1.c, y = V2.c), color = "#3C5488FF", size = 3, alpha = 0.3) +
+  geom_segment(data = center,color ="#CC79A7",
+               aes(x = V1.a,
+                   y = V2.a,
+                   xend = V1.b,
+                   yend = V2.b,
+                   color = "a to b", alpha = .5),
+               arrow = arrow (length = unit(0.3,"cm"))) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V3, y = V4), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V3, y = V4), color = "#E69F00", size = 5) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "#CC79A7" , size = 5) +
+  geom_segment(data = arrowCentroids,
+               aes(x = V3,
+                   y = V4,
+                   xend = V1,
+                   yend = V2,
+                   color = "mean"),
+               arrow = arrow (length = unit(0.3,"cm")), color = "black" ) +
+  xlab("Bray-Curtis distance V1")+
+  ylab("Bray-Curtis distance V2")+
+  guides(color = guide_legend(title = "trajectory")) +
+  theme (axis.title.x = element_text (size = 24), 
+         axis.text.x = element_text (size = 24), 
+         axis.text.y = element_text (size = 24), 
+         axis.title.y = element_text (size = 24))
+
+print(plot_all)
+
+# fasting to follow-up
+time_b <- Samp[Samp$Visite == "fasting", ]
+time_c <- Samp[Samp$Visite == "follow-up", ]
+
+all <- merge(time_b, time_c, by = "Probanden_ID", all = TRUE, suffixes = c(".b",".c"))
+
+center <- all
+for (i in c("V1.b","V1.c")){
+  center[,i] <- (all[, i] - all[, "V1.b"])
+}
+for (i in c("V2.b","V2.c")){
+  center[,i] <- (all[, i] - all[, "V2.b"])
+}
+center <- center[, c("V1.b","V1.c","V2.b","V2.c", "Probanden_ID")]
+
+center <- na.exclude(center)
+
+arrowCentroids <- as.data.frame(matrix(c(mean(center$V1.c),
+                                         mean(center$V2.c), 
+                                         center$V1.b[1], center$V2.b[1]), ncol = 4))
+
+# plot centered 
+plot_all1 <- ggplot(center, aes(x = V1.b, y = V2.b)) +
+  geom_point(data = center, aes(x = V1.b, y = V2.b), size = 4, alpha = 0.8) + 
+  theme_classic() +
+  geom_point(data = center, aes(x = V1.c, y = V2.c), color = "#0072B2", size = 3, alpha = 0.3) +
+  # geom_point(data = center, aes(x = V1.c, y = V2.c), color = "#3C5488FF", size = 3, alpha = 0.3) +
+  geom_segment(data = center,color = "#0072B2",
+               aes(x = V1.b,
+                   y = V2.b,
+                   xend = V1.c,
+                   yend = V2.c,
+                   color = "b to c", alpha = .5),
+               arrow = arrow (length = unit(0.3,"cm"))) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V3, y = V4), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V3, y = V4), color = "#E69F00", size = 5) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "#0072B2" , size = 5) +
+  geom_segment(data = arrowCentroids,
+               aes(x = V3,
+                   y = V4,
+                   xend = V1,
+                   yend = V2,
+                   color = "mean"),
+               arrow = arrow (length = unit(0.3,"cm")), color = "black" ) +
+  xlab("Bray-Curtis distance V1")+
+  ylab("Bray-Curtis distance V2")+
+  guides(color = guide_legend(title = "trajectory")) +
+  # scale_color_manual(values = c("#4DBBD5FF", "#00A087FF", "black"))+
+  
+  theme (axis.title.x = element_text (size = 24), 
+         axis.text.x = element_text (size = 24), 
+         axis.text.y = element_text (size = 24), 
+         axis.title.y = element_text (size = 24))
+
+print(plot_all1)
+
+time_b <- Samp[Samp$Visite == "fasting", ]
+time_c <- Samp[Samp$Visite == "follow-up", ]
+
+
+all.1 <- merge(time_b, time_c, by = "Probanden_ID", all = TRUE, suffixes = c(".b",".c"))
+
+center.1 <- all.1
+for (i in c("V1.b","V1.c")){
+  center.1[,i] <- (all.1[, i] - all.1[, "V1.b"])
+}
+for (i in c("V2.b","V2.c")){
+  center.1[,i] <- (all.1[, i] - all.1[, "V2.b"])
+}
+center.1 <- center.1[, c("V1.b","V1.c","V2.b","V2.c", "Probanden_ID")]
+
+center.1 <- na.exclude(center.1) # nur Donoren die alle swabsite haben
+
+arrowCentroids.1 <- as.data.frame(matrix(c(mean(center.1$V1.c),
+                                           mean(center.1$V2.c), 
+                                           center.1$V1.b[1], center.1$V2.b[1]), ncol = 4))
+
+
+
+
+plot_all +
+  geom_point(data = center.1, aes(x = V1.b, y = V2.b), size = 4, alpha = 0.8, color = "#E69F00") + 
+  theme_classic() +
+  geom_point(data = center.1, aes(x = V1.c, y = V2.c), color = "#0072B2", size = 3, alpha = 0.3) +
+  # geom_point(data = center, aes(x = V1.c, y = V2.c), color = "#3C5488FF", size = 3, alpha = 0.3) +
+  geom_segment(data = center.1,color = "#0072B2",
+               aes(x = V1.b,
+                   y = V2.b,
+                   xend = V1.c,
+                   yend = V2.c,
+                   color = "b to c", alpha = .5),
+               arrow = arrow (length = unit(0.3,"cm"))) +
+  geom_point(data = arrowCentroids.1, aes(x = V1, y = V2), color = "black", size = 6) +
+  geom_point(data = arrowCentroids.1, aes(x = V3, y = V4), color = "black", size = 6, fill = "black") +
+  geom_point(data = arrowCentroids.1, aes(x = V3, y = V4), color = "black", size = 5) +
+  geom_point(data = arrowCentroids.1, aes(x = V1, y = V2), color = "#0072B2" , size = 5) +
+  geom_segment(data = arrowCentroids.1,
+               aes(x = V3,
+                   y = V4,
+                   xend = V1,
+                   yend = V2,
+                   color = "mean"),
+               arrow = arrow (length = unit(0.3,"cm")), color = "black" ) +
+  xlab("Bray-Curtis distance V1")+
+  ylab("Bray-Curtis distance V2")+
+  guides(color = guide_legend(title = "trajectory")) +
+  boxplot.theme.2 +
+  theme(legend.position = "top")+
+  xlab("Bray-Curtis distance V1") -> fig.2.trajectorie.plot
+
+fig.2.trajectorie.plot
+```
+
+```{r}
+time_a <- Samp[Samp$Visite == "baseline 1", ]
+time_b <- Samp[Samp$Visite == "fasting", ]
+time_c <- Samp[Samp$Visite == "follow-up", ]
+
+
+all_three <- merge(time_a, time_b, by = "Probanden_ID", 
+                   suffixes = c(".a",".b"))
+
+all_three <- merge(all_three, time_c, by = "Probanden_ID", 
+                   suffixes = c("", ".c"))
+
+
+######################
+# Center on baseline
+####################
+
+# Temporarily store baseline coordinates
+b0_x <- all_three$V1.a
+b0_y <- all_three$V2.a
+
+# Subtract baseline from baseline, fasting, follow-up
+all_three$V1.a <- all_three$V1.a - b0_x   
+all_three$V2.a <- all_three$V2.a - b0_y
+
+all_three$V1.b <- all_three$V1.b - b0_x   # fasting is relative to baseline
+all_three$V2.b <- all_three$V2.b - b0_y
+
+all_three$V1   <- all_three$V1   - b0_x   # follow-up is relative to baseline
+all_three$V2   <- all_three$V2   - b0_y
+
+centroids <- data.frame(
+  group = c("baseline", "fasting", "follow-up"),
+  x = c(0, mean(all_three$V1.b, na.rm = TRUE), mean(all_three$V1, na.rm = TRUE)),
+  y = c(0, mean(all_three$V2.b, na.rm = TRUE), mean(all_three$V2, na.rm = TRUE))
+)
+
+
+ggplot(all_three) +
+  geom_segment(
+    aes(x = V1.a, y = V2.a, xend = V1.b, yend = V2.b),
+    color = "#CC79A7",
+    arrow = arrow(length = unit(0.3, "cm")),
+    alpha = 0.7
+  ) +
+  geom_segment(
+    aes(x = V1, y = V2, xend = V1.a, yend = V2.a),
+    color = "#0072B2",
+    arrow = arrow(length = unit(0.3, "cm")),
+    alpha = 0.7
+  ) +
+  geom_point(aes(x = V1.a, y = V2.a), color = "#E69F00", alpha = 0.7, size = 3) +
+  geom_point(aes(x = V1.b, y = V2.b), color = "#CC79A7", size = 3) +
+  geom_point(aes(x = V1, y = V2), color = "#0072B2", size = 3) +
+  geom_point(
+    data = centroids,
+    aes(x = x, y = y, fill = group),
+    shape = 21,
+    size = 6,
+    color = "black",
+    stroke = 1.5
+  ) +
+  scale_fill_manual(
+    values = c("baseline" = "#E69F00", "fasting" = "#CC79A7", "follow-up" = "#0072B2")
+  ) +
+  theme_classic() +
+  xlab("Bray-Curtis distance V1") +
+  ylab("Bray-Curtis distance V2") +
+  theme(
+    axis.text  = element_text(size = 16, color = "black"),
+    axis.title = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    legend.position = "top"
+  ) -> fig.2.trajectorie.plot.new
+fig.2.trajectorie.plot.new
+```
+
+
+## Changes in bacterial abundance
+
+### Significant changes on species level
+```{r}
+genus <- tax_glom(physeq = PS.tree, taxrank = "Species")
+data_biom_all <- as.data.frame(tax_table(PS.tree)) 
+data_biom_tax <- as.data.frame(tax_table(genus)) 
+data_biom <-as.data.frame(otu_table(genus)) 
+
+
+data_biom_tax$hash <- rownames(data_biom_tax)
+data_biom$hash <- rownames(data_biom)
+joined_genus <- left_join(data_biom_tax, data_biom)
+joined_genus$hash <- NULL
+
+
+genus <- joined_genus[, - c(1:6,8:9) ]
+rownames(genus) <- make.names(genus$Species, unique = T)
+genus$Species <- NULL
+genus <- as.data.frame(t(genus))
+
+
+sample.data <- data.frame(sample_data(PS.tree)) %>%
+  select(Probanden_ID, Visite)
+
+## combine with bacterial data
+names <- readRDS("rowdata/names.rds")
+genus <- t(names)
+bacteria.all <- cbind(sample.data, genus)
+
+## make long format
+bacteria.long <- pivot_longer(bacteria.all, cols = c(3:ncol(bacteria.all)), names_to = "Species", values_to = "Abundance")
+
+# Filter data to only include subjects with all three visits for each species
+df_complete <- bacteria.long %>%
+  group_by(Species, Probanden_ID) %>%
+  filter(n_distinct(Visite) == 3) %>%  # Keep only subjects with all 3 visits
+  ungroup()
+
+# Perform paired pairwise Wilcoxon tests across all visits
+result <- df_complete %>% 
+  group_by(Species) %>%
+  pairwise_wilcox_test(
+    formula = Abundance ~ Visite, 
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "BH"
+  )
+
+# Extract significant results (species that are significant at least once)
+signif_results <- result %>%
+  filter(p.adj < 0.1)
+
+print(signif_results)
+sig_species <- unique(signif_results$Species)
+
+filtered_result <- result %>%
+  filter(Species %in% sig_species)
+
+# Compute Cliff's delta for each species and each comparison
+all_comps_for_sig_species <- filtered_result %>%
+  rowwise() %>%
+  mutate(
+    cliff_delta = effsize::cliff.delta(
+      bacteria.long$Abundance[bacteria.long$Species == Species & bacteria.long$Visite == group2],
+      bacteria.long$Abundance[bacteria.long$Species == Species & bacteria.long$Visite == group1],
+    )$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(
+    is_significant = p.adj < 0.1,
+    Direction = case_when(
+      cliff_delta > 0 ~ "Increased",
+      cliff_delta < 0 ~ "Decreased",
+      TRUE            ~ "No change"
+    ),
+    effect_size = cliff_delta,
+    point_alpha = if_else(is_significant, 1, 0.4),
+    outline_color = if_else(is_significant, "black", "grey"),
+    Comparison = paste(group1, group2, sep = " vs ")
+  )
+
+# Clean up species names
+sig_plot_data <- all_comps_for_sig_species %>%
+  mutate(
+    Species = gsub("\\.sp\\.", "##SP##", Species),
+    Species = gsub("\\.", " ", Species),
+    Species = gsub("##SP##", " sp.", Species),
+    Species = gsub("[\\(\\)]", "", Species),
+    Species = gsub("\\s+", " ", Species),
+    Species = sub("^NA\\s+", "", Species),
+    Species = trimws(Species)
+  )
+
+sig_plot_data$Comparison <- factor(sig_plot_data$Comparison,
+  levels = c("baseline 1 vs fasting", "fasting vs follow-up", "baseline 1 vs follow-up"))
+
+# Save as table for supplement
+library(writexl)
+#write_xlsx(sig_plot_data, "sig_plot_data_species.xlsx")
+
+order_species <- sig_plot_data %>%
+  filter(Comparison == "baseline 1 vs fasting") %>%
+  arrange(effect_size) %>%
+  pull(Species)
+
+sig_plot_data <- sig_plot_data %>%
+  mutate(Species = factor(Species, levels = order_species))
+
+
+
+# Plot the results using ggplot2
+ggplot(sig_plot_data, aes(
+  x = Comparison,
+  y = Species  
+)) +
+  geom_point(
+    aes(
+      fill = Direction,         
+      size = abs(effect_size),  
+      alpha = point_alpha,      
+      color = outline_color     
+    ),
+    shape = 21,    
+    stroke = 0.8
+  ) +
+  scale_fill_manual(values = c("Increased" = "#0075DC", 
+                               "Decreased" = "#E64B35FF",
+                               "No change"  = "grey70")) +
+  scale_color_identity() +
+  scale_alpha_identity() +
+  scale_size_continuous(range = c(2, 6)) +
+  labs(
+    x = "Comparison",
+    y = "Species",
+    fill = "Direction",
+    size = "|\u0394 Cliff's delta|"
+  ) +
+  theme_classic(base_size = 24) +
+  theme(
+    axis.text.y = element_text(face = "italic", color = "black"),
+    axis.text.x = element_text(color = "black", angle = 45, hjust = 1),
+    axis.title  = element_text(face = "bold"),
+    axis.title.x = element_blank(),
+    legend.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) -> fig.2.sig.species.plot
+
+print(fig.2.sig.species.plot)
+
+ggsave(plot = fig.2.sig.species.plot, filename = "fig.2.sig.species.plot.pdf", width = 12.5, height = 10)
+
+
+```
+
+
+
+
+### Significant changes presented as boxplots
+```{r}
+# filter the significant species names
+significant <- signif_results %>%
+  filter(group1 == "baseline 1" & group2 == "follow-up") 
+
+sign.species <- significant$Species
+
+t.names <- data.frame(t(names), check.names = FALSE)
+sign.names <- t.names %>%
+  select(sign.species)
+
+# bind it with metadata 
+sample.data <- data.frame(sample_data(PS.tree)) %>%
+  select(Probanden_ID, Visite)
+
+sig.species.meta <- cbind(sample.data, sign.names)
+
+sig.species.long <- pivot_longer(sig.species.meta, cols = c(3:9), names_to = "Species", values_to = "Abundance")
+
+sig.species.long<- sig.species.long %>%
+  mutate(
+    # Temporarily protect ".sp." by replacing with a placeholder
+    Species = gsub("\\.sp\\.", "##SP##", Species),
+    # Replace all remaining dots with a space
+    Species = gsub("\\.", " ", Species),
+    # Restore the placeholder back to " sp."
+    Species = gsub("##SP##", " sp.", Species),
+    # Remove any parentheses (both opening and closing)
+    Species = gsub("[\\(\\)]", "", Species),
+    # Clean up multiple spaces and trim any leading/trailing whitespace
+    Species = gsub("\\s+", " ", Species),
+    Species = trimws(Species)
+  )
+
+
+## create boxplots 
+sig.species.long %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  theme_classic() +
+  facet_wrap(~ Species, ncol = 3) +
+  ylim(c(0,5))+
+  theme(axis.text = element_text(size=20, color = "black"),
+        axis.text.x = element_text(angle = 45, hjust = 1, size=20, color = "black"),
+        axis.title = element_text(size=20, color = "black"),
+        legend.text = element_text(size=20),
+        legend.title = element_text(size=20), 
+        axis.title.x = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA,  size = 1),
+        strip.background = element_blank(), 
+        strip.text = element_text(size = 18, color = "black", face = "italic"),
+        legend.position = "none") +
+  labs(y = "log (Abundance)") -> fig.2.species.significant.boxplots
+fig.2.species.significant.boxplots
+
+
+### everything seperate
+sig.species.long %>%
+  filter(Species == "Adlercreutzia equolifaciens") %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Adlercreutzia equolifaciens", y = "log (Abundance)") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Adlercreutzia.equolifaciens
+
+ggsave("fig.2.boxplots.Adlercreutzia.equolifaciens.pdf", plot = fig.2.boxplots.Adlercreutzia.equolifaciens, width = 5, height = 5)
+
+sig.species.long %>%
+  filter(Species == "Bifidobacterium bifidum CAG 234") %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Bifidobacterium bifidum", y = "log (Abundance)") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Bifidobacterium.bifidum
+
+ggsave("fig.2.boxplots.Bifidobacterium.bifidum.pdf", plot = fig.2.boxplots.Bifidobacterium.bifidum, width = 5, height = 5)
+
+sig.species.long %>%
+  filter(Species == "Erysipelatoclostridium ramosum") %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Erysipelatoclostridium ramosum", y = "log (Abundance)") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Erysipelatoclostridium.ramosum
+
+ggsave("fig.2.boxplots.Erysipelatoclostridium.ramosum.pdf", plot = fig.2.boxplots.Erysipelatoclostridium.ramosum, width = 5, height = 5)
+
+sig.species.long %>%
+  filter(Species == "NA Acinetobacter sp.CAG 196 CAG 196_36_41") %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Acinetobacter sp.CAG 196", y = "log (Abundance)") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Acinetobacter.CAG
+
+ggsave("fig.2.boxplots.Acinetobacter.CAG.pdf", plot = fig.2.boxplots.Acinetobacter.CAG, width = 5, height = 5)
+
+sig.species.long %>%
+  filter(Species == "NA Azospirillum species incertae sedis") %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Azospirillum sp. incertae sedis", y = "log (Abundance)") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Azospirillum.sp
+
+ggsave("fig.2.boxplots.Azospirillum.sp.pdf", plot = fig.2.boxplots.Azospirillum.sp, width = 5, height = 5)
+
+sig.species.long %>%
+  filter(Species == "NA Butyricicoccus sp.UC5 1 1D1") %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Butyricicoccus sp.UC5", y = "log (Abundance)") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Butyricicoccus.sp.
+
+ggsave("fig.2.boxplots.Butyricicoccus.sp.pdf", plot = fig.2.boxplots.Butyricicoccus.sp., width = 5, height = 5)
+
+sig.species.long %>%
+  filter(Species == "Ruthenibacterium lactatiformans 4_3_54A2FAA") %>%
+  ggplot(aes(x = Visite, y = log(Abundance), fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Ruthenibacterium lactatiformans", y = "log (Abundance)") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Ruthenibacterium.lactatiformans
+
+ggsave("fig.2.boxplots.Ruthenibacterium.lactatiformans.pdf", plot = fig.2.boxplots.Ruthenibacterium.lactatiformans, width = 5, height = 5)
+```
+
+
+
+### Significant changes on genus level
+
+```{r}
+genus <- tax_glom(physeq = PS.tree, taxrank = "Genus")
+data_biom_all <- as.data.frame(tax_table(PS.tree)) 
+data_biom_tax <- as.data.frame(tax_table(genus)) 
+data_biom <-as.data.frame(otu_table(genus)) 
+
+
+#genus_otu_short <- as.data.frame(otu_table(data_biom_tax))
+data_biom_tax$hash <- rownames(data_biom_tax)
+data_biom$hash <- rownames(data_biom)
+joined_genus <- left_join(data_biom_tax, data_biom)
+joined_genus$hash <- NULL
+
+# Extract genus and abundance
+genus <- joined_genus[, - c(1:5,7:8) ]
+rownames(genus) <- make.names(genus$Genus, unique = T)
+genus$Genus <- NULL
+genus <- as.data.frame(t(genus))
+
+## add relevant meta data
+sample.data <- data.frame(sample_data(PS.tree)) %>%
+  select(Probanden_ID, Visite)
+
+## combine with bacterial data
+bacteria.all <- cbind(sample.data, genus)
+
+## make long format
+bacteria.long <- pivot_longer(bacteria.all, cols = c(3:ncol(bacteria.all)), names_to = "Genus", values_to = "Abundance")
+
+# Filter data to only include subjects with all three visits for each species
+df_complete <- bacteria.long %>%
+  group_by(Genus, Probanden_ID) %>%
+  filter(n_distinct(Visite) == 3) %>%  # Keep only subjects with all 3 visits
+  ungroup()
+
+# Now perform the paired pairwise Wilcoxon tests across all visits
+result.genus <- df_complete %>% 
+  group_by(Genus) %>%
+  pairwise_wilcox_test(
+    formula = Abundance ~ Visite, 
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "BH"
+  )
+
+### extract signifcant results
+signif.results.genus <- result.genus %>%
+  filter(p.adj < 0.1)
+
+print(signif_results)
+
+# Species that are significant at least once
+sig_genus <- unique(signif.results.genus$Genus)
+
+filtered_result <- result.genus %>%
+  filter(Genus %in% sig_genus)
+
+# Compute Cliff's delta for each Genus and each comparison
+all_comps_for_sig_Genus <- filtered_result %>%
+  rowwise() %>%
+  mutate(
+    cliff_delta = effsize::cliff.delta(
+      bacteria.long$Abundance[bacteria.long$Genus == Genus & bacteria.long$Visite == group2],
+      bacteria.long$Abundance[bacteria.long$Genus == Genus & bacteria.long$Visite == group1]
+    )$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(
+    is_significant = p.adj < 0.1,
+    Direction = case_when(
+      cliff_delta > 0 ~ "Increased",
+      cliff_delta < 0 ~ "Decreased",
+      TRUE            ~ "No change"
+    ),
+    effect_size = cliff_delta,
+    point_alpha = if_else(is_significant, 1, 0.4),
+    outline_color = if_else(is_significant, "black", "grey"),
+    Comparison = paste(group1, group2, sep = " vs ")
+  )
+
+# Clean up Genus names
+sig_plot_data <- all_comps_for_sig_Genus %>%
+  mutate(
+    # Temporarily protect ".sp." by replacing with a placeholder
+    Genus = gsub("\\.sp\\.", "##SP##", Genus),
+    # Replace all remaining dots with a space
+    Genus = gsub("\\.", " ", Genus),
+    # Restore the placeholder back to " sp."
+    Genus = gsub("##SP##", " sp.", Genus),
+    # Remove any parentheses
+    Genus = gsub("[\\(\\)]", "", Genus),
+    # Clean up extra spaces and trim
+    Genus = gsub("\\s+", " ", Genus),
+    Genus = trimws(Genus)
+  )
+
+# Order comparisons on x-axis 
+sig_plot_data$Comparison <- factor(sig_plot_data$Comparison,
+  levels = c("baseline 1 vs fasting", "fasting vs follow-up", "baseline 1 vs follow-up"))
+
+# Save as table for supplement
+#write_xlsx(sig_plot_data, "sig_plot_data_Genus.xlsx")
+
+# Extract ordering for Genus based on the effect size from "baseline 1 vs fasting"
+order_Genus <- sig_plot_data %>%
+  filter(Comparison == "baseline 1 vs fasting") %>%
+  arrange(effect_size) %>%
+  pull(Genus)
+
+# Update the Genus factor levels based on the ordering from the baseline 1 vs fasting comparison
+sig_plot_data <- sig_plot_data %>%
+  mutate(Genus = factor(Genus, levels = order_Genus))
+
+# Plot the results
+ggplot(sig_plot_data, aes(
+  x = Comparison,
+  y = Genus  # Now already ordered based on baseline 1 vs fasting
+)) +
+  geom_point(
+    aes(
+      fill = Direction,         
+      size = abs(effect_size),  
+      alpha = point_alpha,      
+      color = outline_color     
+    ),
+    shape = 21,    
+    stroke = 0.8
+  ) +
+  scale_fill_manual(values = c("Increased" = "#0075DC", 
+                               "Decreased" = "#E64B35FF",
+                               "No change"  = "grey70")) +
+  scale_color_identity() +
+  scale_alpha_identity() +
+  scale_size_continuous(range = c(2, 6)) +
+  labs(
+    x = "Comparison",
+    y = "Genus",
+    fill = "Direction",
+    size = "|\u0394 Cliff's delta|"
+  ) +
+  theme_classic(base_size = 24) +
+  theme(
+    axis.text.y = element_text(face = "italic", color = "black"),
+    axis.text.x = element_text(color = "black", angle = 45, hjust = 1),
+    axis.title  = element_text(face = "bold"),
+    axis.title.x = element_blank(),
+    legend.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) -> fig.2.sig.Genus.plot
+
+print(fig.2.sig.Genus.plot)
+#ggsave(plot = fig.2.sig.Genus.plot, filename = "fig.2.sig.Genus.plot.pdf", width = 14, height = 18)
+```
+
+## Changes in the functional potential
+
+### Preparing the data
+```{r}
+# Load the kegg names
+func <- read.table("rowdata/functions/kegg_names_annotation.tsv", sep = "\t", header =T)
+
+# replace the symbols which are not "good" for R
+func$Long_names <- gsub(" ", "_", func$Long_names)
+func$Long_names <- gsub(" ", "_", func$Long_names)
+func$Long_names <- gsub(" ", "_", func$Long_names)
+func$Long_names <- gsub("+", "", func$Long_names)
+func$Long_names <- gsub("-", "_", func$Long_names)
+func$Long_names <- gsub("/", "_", func$Long_names)
+
+nice_feature_names_for_annotation <- func %>%
+  select(c("KO_number", "Long_names"))
+# write.table(nice_feature_names_for_annotation, file = "~/Dropbox/Master_arbeit_Mina/healthy_fast/functions/helper_function_names.tsv", sep="\t", quote=F)
+
+func$Long_names<- NULL
+row.names(func) <-func$KO_number
+func$KO_number <- NULL
+
+func <- as.data.frame(t(func))
+func$rowname <- row.names(func)
+row_names_new <- gsub(pattern = "preprocessed\\.|filtered_qc\\.pair", replacement = "", rownames(func))
+row_names_new <- gsub(pattern = "_", replacement = ".", row_names_new)
+rownames(func) <- row_names_new
+
+
+# Check if each column is numeric
+numeric_cols <- sapply(func, is.numeric)
+
+# Find columns that are not numeric
+non_numeric_cols <- names(numeric_cols)[!numeric_cols]
+
+# Print non-numeric column names
+print(non_numeric_cols)
+
+## the output was that rowname is non numeric, therefore we have to delete that colum
+
+func$rowname <- NULL
+
+# the dataset still contains V1 samples which need to be filtered out
+fun <- func %>%
+  rownames_to_column(var = "row_names")
+
+fun <- fun %>%
+  filter(!grepl("^V1", row_names))
+
+fun <- fun %>%
+  column_to_rownames(var = "row_names")
+
+fun$rowname <- NULL
+
+#write.table(fun, file = "rowdata/functions/functions_rdy.tsv", sep="\t", quote=F)
+```
+
+### Combine functional data with meta data
+```{r}
+#Loading preprocessed data
+functions_table <- read.table("rowdata/functions/functions_rdy.tsv", sep="\t", header = TRUE)
+
+# make sure that we have the same patients included in the functions table
+sample_table_1 <- data.frame(sample_data(PS.tree))
+functions_table <- functions_table[rownames(functions_table) %in% rownames(sample_table_1), ] 
+
+functions_table_names <- t(functions_table)
+functions_table_names <- as.data.frame(functions_table_names)
+functions_table_names <- functions_table_names %>%
+  rownames_to_column(var = "KO_number")
+
+## nice names: 
+nice <- nice_feature_names_for_annotation
+nice <- as.data.frame(nice)
+row.names(nice) <- NULL
+
+nice <- nice %>%
+  mutate(Long_names = coalesce(Long_names, "no_name"))
+
+nice$Long_names <- gsub("_\\[EC:.*?\\]", "", nice$Long_names)
+
+
+kegg_names <- read_csv("rowdata/functions/kegg_names_annotation_new.csv")
+kegg_names <- kegg_names[ ,c(1, ncol(kegg_names))]
+
+kegg_names <- kegg_names %>%
+  mutate(Long_names = coalesce(Long_names, "no_name")) %>%
+  rename("KO_number" = 1)
+
+kegg_names$KO_number <- gsub("ko:", "", kegg_names$KO_number)
+
+
+kegg_modules <- read_csv("rowdata/functions/kegg_module_annotation.csv")
+
+
+
+functions_table_names <- functions_table_names %>%
+  left_join(nice, by = "KO_number")
+
+# summarizing samples with same Long name
+functions_table_names_summary <- functions_table_names %>%
+  group_by(Long_names) %>%
+  summarize(across(where(is.numeric), ~ sum(.x, na.rm = TRUE)))
+
+
+functions_table_names <- functions_table_names_summary %>%
+  column_to_rownames(var = "Long_names")
+
+#functions_table_names <- t(functions_table_names)
+
+```
+
+### Alpha diversity of functional potential
+```{r}
+alpha <- microbiome::alpha(t(functions_table), index = "all") 
+
+## merge with metadata
+functions_alpha <- merge(sample_table_1, alpha, by = 0)
+functions_alpha <- functions_alpha %>%
+  column_to_rownames(var = "Row.names")
+
+
+functions_alpha %>%
+  ggplot(aes(x = Visite, y = diversity_shannon, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  boxplot.theme +
+  labs(y = "shannon diversity") -> fig.2.shannon.functions.plot
+
+fig.2.shannon.functions.plot
+```
+### Beta diversity of functional potential
+```{r}
+# Calculate Bray-Curtis distance using the vegan package
+dist_bc <- as.matrix((vegdist(x = functions_table , method = "bray"))) #here we have to switch rows and columns because we have taxa_are_rows = TRUE
+dist_bc[1:5, 1:5]
+
+pcoa <- cmdscale(dist_bc)
+
+Samp <- data.frame(sample_data(PS.tree))
+Samp <- merge(Samp, pcoa, by = 0)
+row.names(Samp) <- Samp$Row.names
+Samp$Row.names <- NULL
+
+centroids <- aggregate(cbind(V1, V2) ~ Visite, Samp, mean)
+
+ggplot(Samp, aes(x = V1, y = V2)) +
+  stat_ellipse(
+    aes(color = Visite, fill = Visite),
+    geom = "polygon",
+    alpha = 0.1,
+    level = 0.95,
+    linetype = 1
+  ) +
+  geom_point(aes(color = Visite), size = 3, alpha = 0.7) +
+  geom_point(
+    data = centroids,
+    aes(fill = Visite),
+    size = 7,         
+    shape = 21,       
+    color = "black"   
+  ) +
+  scale_color_manual("Visite",
+    values = c("baseline 1" = "#E69F00", 
+               "fasting"    = "#CC79A7", 
+               "follow-up"  = "#0072B2")
+  ) +
+  scale_fill_manual("Visite",
+    values = c("baseline 1" = "#E69F00", 
+               "fasting"    = "#CC79A7", 
+               "follow-up"  = "#0072B2")
+  ) +
+  xlab("Bray-Curtis distance V1") +
+  ylab("Bray-Curtis distance V2") +
+  boxplot.theme.2 +
+  theme(
+    axis.title.x = element_text(size = 24, color = "black"),  # restore x-axis title
+    axis.line = element_line(color = "black"),
+    legend.position = "top") -> fig.2.bray.curtis.functions
+
+fig.2.bray.curtis.functions
+```
+
+
+### Significant changes in functional potential
+```{r}
+Samp <- data.frame(meta(PS.tree))
+samp_for_model <- Samp[, c("Probanden_ID", "koerpergewicht", "Sex", "Visite", "waist", "Alter")]
+
+kegg_modules <- read_csv("rowdata/functions/kegg_module_annotation.csv")
+
+kegg_modules <- kegg_modules[ ,-c(1, 128:133)]
+
+functions_modules_summary <- kegg_modules %>%
+  group_by(long) %>%
+  summarize(across(where(is.numeric), ~ sum(.x, na.rm = TRUE)))
+
+functions_modules_summary <- na.omit(functions_modules_summary)
+
+kegg_modules <- functions_modules_summary  %>%
+  column_to_rownames(var = "long")
+
+colnames(kegg_modules) <- gsub(colnames(kegg_modules), pattern = "preprocessed\\.|filtered_qc\\.pair", replacement = "")
+colnames(kegg_modules) <- gsub(colnames(kegg_modules), pattern = "_", replacement = ".")
+
+kegg_modules <- data.frame(t(kegg_modules))
+
+## remove the samples which are not present in the sample data
+kegg_modules <- kegg_modules[rownames(kegg_modules) %in% rownames(Samp), ]
+
+modules_meta <- merge(samp_for_model, kegg_modules, by = 0)
+
+modules_meta <- modules_meta %>%
+  column_to_rownames(var = "Row.names")
+
+#saveRDS(modules_meta, file = "modules.meta.leaner.rds")
+
+functions_long <- pivot_longer(modules_meta, cols = c(7:ncol(modules_meta)), values_to = "Abundance", names_to = "Function")
+
+# Filter data to only include subjects with all three visits for each Genus
+df_complete <- functions_long %>%
+  group_by(Function, Probanden_ID) %>%
+  filter(n_distinct(Visite) == 3) %>%  # Keep only subjects with all 3 visits
+  ungroup()
+
+# Now perform the paired pairwise Wilcoxon tests across all visits
+result.function <- df_complete %>% 
+  group_by(Function) %>%
+  pairwise_wilcox_test(
+    formula = Abundance ~ Visite, 
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "BH"
+  )
+
+### extract signifcant results
+signif.results.function <- result.function %>%
+  filter(p.adj < 0.1)
+
+# Genus that are significant at least once
+sig_function <- unique(signif.results.function$Function)
+
+filtered_result <- result.function %>%
+  filter(Function %in% sig_function)
+
+
+# Compute Cliff's delta for each Function and each comparison
+all_comps_for_sig_function <- filtered_result %>%
+  rowwise() %>%
+  mutate(
+    cliff_delta = effsize::cliff.delta(
+      functions_long$Abundance[functions_long$Function == Function & functions_long$Visite == group2],
+      functions_long$Abundance[functions_long$Function == Function & functions_long$Visite == group1]
+    )$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(
+    is_significant = p.adj < 0.1,
+    Direction = case_when(
+      cliff_delta > 0 ~ "Increased",
+      cliff_delta < 0 ~ "Decreased",
+      TRUE            ~ "No change"
+    ),
+    effect_size = cliff_delta,
+    point_alpha = if_else(is_significant, 1, 0.4),
+    outline_color = if_else(is_significant, "black", "grey"),
+    Comparison = paste(group1, group2, sep = " vs ")
+  )
+
+# Clean up Function names
+sig_plot_data <- all_comps_for_sig_function %>%
+  mutate(
+    # Temporarily protect ".sp." by replacing with a placeholder
+    Function = gsub("\\.sp\\.", "##SP##", Function),
+    # Replace all remaining dots with a space
+    Function = gsub("\\.", " ", Function),
+    # Restore the placeholder back to " sp."
+    Function = gsub("##SP##", " sp.", Function),
+    # Remove any parentheses
+    Function = gsub("[\\(\\)]", "", Function),
+    # Clean up extra spaces and trim
+    Function = gsub("\\s+", " ", Function),
+    Function = trimws(Function)
+  )
+
+# Order comparisons on x-axis (optional)
+sig_plot_data$Comparison <- factor(sig_plot_data$Comparison,
+  levels = c("baseline 1 vs fasting", "fasting vs follow-up", "baseline 1 vs follow-up"))
+
+# Save as table for supplement
+#write_xlsx(sig_plot_data, "sig_plot_data_Function.xlsx")
+
+# Extract ordering for Function based on the effect size from "baseline 1 vs fasting"
+order_Function <- sig_plot_data %>%
+  filter(Comparison == "baseline 1 vs fasting") %>%
+  arrange(effect_size) %>%
+  pull(Function)
+
+# Update the Function factor levels based on the ordering from the baseline 1 vs fasting comparison
+sig_plot_data <- sig_plot_data %>%
+  mutate(Function = factor(Function, levels = order_Function))
+
+# Plot the results using ggplot2
+ggplot(sig_plot_data, aes(
+  x = Comparison,
+  y = Function  
+)) +
+  geom_point(
+    aes(
+      fill = Direction,        
+      size = abs(effect_size),  
+      alpha = point_alpha,      
+      color = outline_color     
+    ),
+    shape = 21,    
+    stroke = 0.8
+  ) +
+  scale_fill_manual(values = c("Increased" = "#0075DC", 
+                               "Decreased" = "#E64B35FF",
+                               "No change"  = "grey70")) +
+  scale_color_identity() +
+  scale_alpha_identity() +
+  scale_size_continuous(range = c(2, 6)) +
+  labs(
+    x = "Comparison",
+    y = "Function",
+    fill = "Direction",
+    size = "|\u0394 Cliff's delta|"
+  ) +
+  theme_classic(base_size = 24) +
+  theme(
+    axis.text.y = element_text(face = "italic", color = "black"),
+    axis.text.x = element_text(color = "black", angle = 45, hjust = 1),
+    axis.title  = element_text(face = "bold"),
+    axis.title.x = element_blank(),
+    legend.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) -> fig.2.sig.Function.plot
+
+print(fig.2.sig.Function.plot)
+ggsave(plot = fig.2.sig.Function.plot, filename = "fig.2.sig.Function.plot.pdf", width = 14, height = 16)
+
+### plot the 3 significant changes
+sig.overall <- sig_plot_data %>%
+  filter(group1 == "baseline 1" & group2 == "follow-up" & p.adj <= 0.1)
+
+functions_long %>%
+  filter(Function == "Ketone.body.biosynthesis") %>%
+  ggplot(aes(x = Visite, y = Abundance, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  scale_y_continuous(labels = scales::scientific) +
+  #ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Ketone body biosynthesis", y = "functional potential") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Ketone.body.biosynthesis
+
+#ggsave("fig.2.boxplots.Ketone.body.biosynthesis.pdf", plot = fig.2.boxplots.Ketone.body.biosynthesis, width = 5, height = 5)
+
+functions_long %>%
+  filter(Function == "Osmoprotectant.transport.system") %>%
+  ggplot(aes(x = Visite, y = Abundance, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  scale_y_continuous(labels = scales::scientific) +
+  #ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "Osmoprotectant transport system", y = "functional potential") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.Osmoprotectant.transport.system
+
+#ggsave("fig.2.boxplots.Osmoprotectant.transport.system.pdf", plot = fig.2.boxplots.Osmoprotectant.transport.system, width = 5, height = 5)
+
+functions_long %>%
+  filter(Function == "acetylneuraminate.and.acetylmannosamine.degradation") %>%
+  ggplot(aes(x = Visite, y = Abundance, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("baseline 1"= "#E69F00", "fasting"="#CC79A7", "follow-up" = "#0072B2")) +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  scale_y_continuous(labels = scales::scientific) +
+  #ylim(c(0,5)) +
+  theme_classic() +
+  labs(title = "acetylneuraminate and acetylmannosamine degradation", y = "functional potential") +
+  theme_classic() +
+    theme(
+      plot.title = element_text(size = 24, color = "black", face = "italic"),
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none") -> fig.2.boxplots.acetylneuraminate.and.acetylmannosamine.degradation
+
+#ggsave("fig.2.boxplots.acetylneuraminate.and.acetylmannosamine.degradation.pdf", plot = fig.2.boxplots.acetylneuraminate.and.acetylmannosamine.degradation, width = 5, height = 5)
+
+```
+
+## Comparison between baseline 0 and baseline 1
+
+### alpha diversity
+
+```{r}
+# load physoseq with all visits
+PS.all.visits <- readRDS("rowdata/PS_all_Visits.rds")
+PS.V1.V2 <- subset_samples(PS.all.visits, Visite %in% c("V1", "V2"))
+
+PS.V1.V2@sam_data$Visite <- factor(PS.V1.V2@sam_data$Visite, 
+                                        levels = c("V1", "V2"),
+                                        labels = c("baseline 0", "baseline 1"))
+
+tab <- microbiome::alpha(PS.V1.V2, index = "all") 
+
+samp_V1.V2 <- data.frame(sample_data(PS.V1.V2))
+
+samp_alpha_V1.V2 <- (merge(samp_V1.V2, tab, by = 0))
+
+samp_alpha_V1.V2 %>%
+  ggplot(aes(x = Visite, y = diversity_shannon, fill = Visite)) +
+  geom_line(aes(group = proband_id), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c(
+  "baseline 0" = "#FFD700",
+  "baseline 1" = "#E69F00")) +
+  geom_point(position = position_jitter(width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  labs(y = "Shannon diversity") -> fig.2.alpha.baseline.comparison
+fig.2.alpha.baseline.comparison
+
+#ggsave("fig.2.alpha.baseline.comparison.pdf", plot = fig.2.alpha.baseline.comparison, width = 5, height = 5)
+
+#### statistics for alpha diversity
+
+samp_alpha_V1.V2 %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(diversity_shannon),
+            sd = sd(diversity_shannon))
+
+
+complete_alpha <- samp_alpha_V1.V2 %>% 
+  group_by(proband_id) %>% 
+  filter(n() == 2) %>% 
+  ungroup()
+
+complete_alpha %>% 
+  pairwise_wilcox_test(
+    formula = diversity_shannon ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+```
+
+### Beta diversity
+```{r}
+dist_matrix <- distance(PS.V1.V2, method = "bray")
+pcoa <- cmdscale(dist_matrix)
+Samp <- data.frame(sample_data(PS.V1.V2))
+Samp <- merge(Samp, pcoa, by = 0)
+row.names(Samp) <- Samp$Row.names
+Samp$Row.names <- NULL
+
+centroids <- aggregate(cbind(V1, V2) ~ Visite, Samp, mean)
+
+fig.2.V1.V2.comparison.beta.diversity <- ggplot(Samp, aes(x = V1, y = V2)) +
+  stat_ellipse(
+    aes(color = Visite, fill = Visite),
+    geom = "polygon",
+    alpha = 0.1,
+    level = 0.95,
+    linetype = 1
+  ) +
+  geom_point(aes(color = Visite), size = 3, alpha = 0.7) +
+  geom_point(
+    data = centroids,
+    aes(fill = Visite),
+    size = 7,         
+    shape = 21,       
+    color = "black"   #
+  ) +
+  scale_color_manual("Visite",
+    values = c("baseline 0" = "#FFD700",
+  "baseline 1" = "#E69F00")
+  ) +
+  scale_fill_manual("Visite",
+    values = c("baseline 0" = "#FFD700",
+  "baseline 1" = "#E69F00")
+  ) +
+  xlab("Bray-Curtis distance V1") +
+  ylab("Bray-Curtis distance V2") +
+  boxplot.theme.2 +
+  theme(
+    axis.title.x = element_text(size = 24, color = "black"),  # restore x-axis title
+    axis.line = element_line(color = "black"),
+    legend.position = "top" )
+
+fig.2.V1.V2.comparison.beta.diversity
+#ggsave("fig.2.V1.V2.comparison.beta.diversity.pdf", plot = fig.2.V1.V2.comparison.beta.diversity, width = 5, height = 5)
+
+######################
+###### statistics ####
+#####################
+
+# Calculating bray_curtis_dist
+bray_curtis_dist <- distance(PS.V1.V2, method = "bray")
+Samp <- data.frame(sample_data(PS.V1.V2))
+
+per_bray <- adonis(bray_curtis_dist ~ Visite + Geschlecht + proband_id + koerpergewicht, data = Samp,  strata = Samp$proband_id)
+per_bray$aov.tab
+```
+

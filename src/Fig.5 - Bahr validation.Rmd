@@ -1,0 +1,534 @@
+---
+title: "Fig.5 - Bahr validation"
+author: "Gelsomina Nicola Kaufhold"
+date: "2025-06-18"
+output: html_document
+---
+
+# Figure 4: Validation in independent studies: Bahr
+
+
+# Load packages
+```{r message=FALSE, warning=FALSE}
+library(phyloseq)
+library(tidyverse)
+library(readxl)
+library(rstatix)
+library(dplyr)
+library(microbiome)
+library(coin)
+library(rstatix)
+library(caret)
+library(stats)
+library(ape)
+library(vegan)
+library(readxl)
+
+boxplot.theme.legend <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black",angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "top")
+
+boxplot.theme <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+```
+
+
+```{r}
+load(url("https://github.com/AlessioMilanese/motus_taxonomy/blob/master/data/motus_taxonomy_2.6.1.Rdata?raw=true"))
+
+# Read bacteria data
+bacteria_NAMS <- read.table("rowdata/nams_motusv2.6.tsv", sep = "\t", header =T)
+# there is always an issue with the annotation -< Aster yellows witches'-broom phytoplasma [ref_mOTU_v25_04538]
+
+# clean and remove 0's
+bacteria_red <- bacteria_NAMS %>%
+  column_to_rownames(var = "X")
+
+# create a reduced data set
+bacteria_red <- bacteria_red %>%
+  na.omit() %>% # omit NA
+  filter(rowSums(.) > 0) %>% 
+  select_if(colSums(.) > 0) 
+
+bacteria_red_removed <- bacteria_red %>%
+  select_if(colSums(.) <= 0) 
+
+# Remove the stuff in the bacteria names, so that we only have a mOTUs_ID
+bacteria_motus <- bacteria_red %>%
+  rownames_to_column() %>%
+  mutate(rowname = str_extract(rowname, "\\[.+\\]|^unassigned$") %>% 
+           str_remove_all("\\[|\\]")) %>%
+  column_to_rownames(var = "rowname")
+
+# create a reduced data set
+bacteria_red <- bacteria_red %>%
+  na.omit() %>% # omit NA
+  filter(rowSums(.) > 0) %>% 
+  select_if(colSums(.) > 0) 
+
+bacteria_red_removed <- bacteria_red %>%
+  select_if(colSums(.) <= 0) # 0 samples are removed 
+
+
+bacteria_motus <- bacteria_red %>%
+  rownames_to_column() %>%
+  mutate(rowname = str_extract(rowname, "\\[.+\\]|^unassigned$") %>% 
+           str_remove_all("\\[|\\]")) %>%
+  column_to_rownames(var = "rowname")
+
+# transpone for rtk
+otu <- bacteria_motus
+
+samplesize <- min(colSums(otu))
+sum <- as.data.frame(
+  colSums(otu))
+
+# Rename sums column
+sum_sample <- sum %>% 
+  dplyr::rename(n_seqs = "colSums(otu)")
+
+ordered_sum_sample <- sum_sample %>%
+  arrange(n_seqs) 
+
+
+# "SnB1"  "SnB31" "SnB33" "S43"  will get removed because of small reads
+# rarefied to 3859 <- wir werfen eine person raus (because of small reads)
+library(rtk)
+samplesize <- 3859 
+set.seed(112)
+
+rtk_OTU <- rtk(otu, repeats = 10, 
+               depth = samplesize, 
+               ReturnMatrix = 1, margin = 2,
+                    verbose = FALSE, threads = 1, 
+               tmpdir = NULL, seed = 0)
+
+# create data frame
+rtk_OTU <- as.data.frame(rtk_OTU$raremat)
+
+NAMS_final <- read_excel("rowdata/20250218_NAMS_final.xlsx")
+sample_numbers <- read.csv("rowdata/SampleIDs_PerProtocol_V1V3_wTubeID.csv")
+meta_all <- read.csv("~/Documents/MDC/LEANER/Microbiome/Masterarbeit/Figures/rowdata/NAMS-FrTheda_DATA_2025-02-17_1322 1.csv")
+
+tubes_NAMS <- sample_numbers %>%
+  select(PatientID, Tube_ID, Visit)
+
+NAMS_meta <- NAMS_final %>%
+  left_join(tubes_NAMS, by = c("record_id" = "PatientID")) %>%
+  filter(!is.na(Tube_ID))
+
+meta.new <- NAMS_meta[NAMS_meta$Tube_ID %in% colnames(rtk_OTU), ]
+
+meta.new <- meta.new %>%
+  column_to_rownames(var ="Tube_ID")
+
+rtk_OTU <- rtk_OTU[, match(rownames(meta.new), colnames(rtk_OTU))]
+
+## Prepare the taxa table
+taxa <- motus2.6_taxonomy %>%
+  filter(mOTUs_ID %in% rownames(rtk_OTU)) %>% 
+  rownames_to_column(var = "rowname") %>% 
+  mutate(rowname = str_remove(rowname, "\\..*")) %>% 
+  column_to_rownames(var = "mOTUs_ID") %>% 
+  select(- rowname) %>%
+  mutate_all(~gsub("[[:digit:]]+ ", "", .)) %>%
+  as.data.frame()
+
+tax <- tax_table(as.matrix(taxa))
+
+otu.ps <- otu_table(rtk_OTU, taxa_are_rows = TRUE)
+
+sample <- sample_data(meta.new)
+
+setdiff(sample_names(sample), sample_names(otu.ps))
+
+PS.NAMS <- merge_phyloseq(otu.ps,tax,sample)
+
+
+random_tree = rtree(ntaxa(PS.NAMS), rooted=TRUE, tip.label=taxa_names(PS.NAMS))
+PS.tree.NAMS <- merge_phyloseq(otu.ps, sample, tax, random_tree)
+#saveRDS(PS.tree.NAMS, file = "rowdata/PS.tree.NAMS.rds")
+```
+
+## Load data and make prediction
+```{r}
+PS.tree.NAMS <- readRDS("rowdata/PS.tree.NAMS.rds")
+
+species <- tax_glom(physeq = PS.tree.NAMS, taxrank = "Species")
+tax_table <- data.frame(tax_table(species))
+
+species <- tax_table %>%
+  select(Species) %>%
+  rownames_to_column(var = "motus")
+
+abundance.NAMS <- data.frame(otu_table(PS.NAMS))
+
+# assign the species names to the otus
+abundance.species <- abundance.NAMS%>%
+  rownames_to_column(var = "motus") %>%
+  left_join(species, by = "motus") %>%
+  replace_na(list(Species = "unassigned"))
+
+abundance.species$motus <- NULL
+
+# remove [....]
+abundance.species$Species <- gsub("\\[.*?\\]", "", abundance.species$Species)
+abundance.species$Species <- gsub("/.*", "", abundance.species$Species)
+# ensure that there is no extra space at the end
+abundance.species$Species <- trimws(abundance.species$Species)
+
+# sum the same species
+abundance_species_sum <- abundance.species %>%
+  group_by(Species) %>%
+  dplyr::summarize(across(starts_with("S"), ~ sum(.x, na.rm = TRUE))) %>%
+  column_to_rownames(var = "Species") %>%
+  filter(rowSums(.) > 0)
+
+
+species.NAMS <- abundance_species_sum
+
+species_int_NAMS <- c("Oscillibacter.sp..57_20","NA.Faecalibacterium.species.incertae.sedis")
+
+species <- data.frame(t(species.NAMS))
+
+int_NAMS <- species %>%
+  select(species_int_NAMS) %>%
+  rename("Oscillibacter.sp..57_20." = "Oscillibacter.sp..57_20", "NA.Faecalibacterium.species.incertae.sedis" = "NA.Faecalibacterium.species.incertae.sedis")
+
+
+#########
+### meta data
+###########
+meta_data <- data.frame(sample_data(PS.tree.NAMS))
+
+meta.NAMS.model <- meta_data %>%
+  rename(sys_mean = sbp_v0, ldl = ldl_v0)
+
+NAMS.model <- cbind(int_NAMS, meta.NAMS.model)
+
+NAMS.model <- NAMS.model %>%
+  filter(Group == "fasting", Visit == "V0") %>%
+  filter(ldl != "N/A") %>%
+  filter(sys_mean != "N/A")
+
+NAMS.model$ldl <- as.numeric(NAMS.model$ldl)
+NAMS.model$sys_mean <- as.numeric(NAMS.model$sys_mean)
+NAMS.model$delta_bmi_v2 <- as.numeric(NAMS.model$delta_bmi_v2)
+
+NAMS.model$delta_bmi_v3 <- as.numeric(NAMS.model$delta_bmi_v3)
+
+##########################
+######### make prediction
+##########################
+model_short <- readRDS("rowdata/model.heilig.rds")
+
+predicted_NAMS<- predict(model_short, newdata = NAMS.model)
+print(predicted_NAMS)
+
+## ad this information to metadata
+NAMS.model$responder <- predicted_NAMS
+
+NAMS.model$responder <- factor(NAMS.model$responder, 
+                                          levels = c(0, 1), 
+                                          labels = c("non-responder", "responder"))
+
+## add BMI at V2
+NAMS.model$BMI_v2 <- NAMS.model$bmi_v0 + NAMS.model$delta_bmi_v2
+
+
+```
+
+## Print and plot weight loss in NAMS
+```{r}
+NAMS.long <- pivot_longer(data = NAMS.model, cols = c("delta_bmi_v2", "delta_bmi_v3"), names_to = "timepoint", values_to = "delta_bmi")
+
+NAMS.long$timepoint <- factor(NAMS.long$timepoint,
+                              levels = c("delta_bmi_v2", "delta_bmi_v3"), 
+                              labels = c("follow-up 1", "follow-up 2"))
+
+NAMS.long %>%
+    ggplot(aes(x = timepoint, y = abs(delta_bmi), fill = responder)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+    labs(y = "Δ BMI")  -> fig.5.NAMS.validation.delta.BMI.v2.v3
+
+NAMS.long %>% 
+  filter(timepoint == "follow-up 1") %>%
+  wilcox_test(formula = delta_bmi ~ responder, data = ., paired = FALSE)
+
+## only plot timepoint V2
+NAMS.long %>%
+  filter(timepoint == "follow-up 1") %>%
+  ggplot(aes(x = responder, y = abs(delta_bmi), fill = responder)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+    scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+    geom_point(shape = 21, position = position_jitter(width = 0), 
+               alpha = 0.5, size = 3, color = "black", fill = "black") +
+    theme_classic() +
+    boxplot.theme +
+  labs(y = "Δ BMI") -> fig.5.NAMS.validation.delta.BMI
+fig.5.NAMS.validation.delta.BMI
+
+NAMS.long %>%
+  filter(timepoint == "follow-up 2") %>%
+  ggplot(aes(x = responder, y = delta_bmi, fill = responder)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+    scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+    geom_point(shape = 21, position = position_jitter(width = 0), 
+               alpha = 0.5, size = 3, color = "black") +
+    theme_classic() +
+    theme(
+      axis.text = element_text(size = 16, color = "black"),
+      axis.title = element_text(size = 16, color = "black"),
+      legend.text = element_text(size = 16, color = "black"),
+      legend.title = element_text(size = 16, color = "black"),
+      axis.title.x = element_blank(),
+      axis.line = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, size = 1.5),
+      legend.position = "top"
+    ) +
+    labs(y = "delta BMI")
+
+NAMS.BMI <- pivot_longer(data = NAMS.model, cols = c("bmi_v0", "BMI_v2"), names_to = "timepoint", values_to = "BMI")
+
+NAMS.BMI$timepoint <- factor(NAMS.BMI$timepoint,
+                              levels = c("bmi_v0", "BMI_v2"), 
+                              labels = c("baseline", "follow-up"))
+
+NAMS.BMI %>%
+  ggplot(aes(x = timepoint, y = BMI, fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "BMI") -> NAMS.responder.model.bmi
+NAMS.responder.model.bmi
+
+####################
+##### statistics
+#################
+####### differences at baseline
+NAMS.BMI %>%
+  filter(timepoint == "baseline") %>%
+  group_by(responder) %>%
+  dplyr::summarize(mean = mean(BMI),
+            sd = sd(BMI))
+
+### differences at follow-up
+NAMS.BMI %>%
+  filter(timepoint == "baseline") %>%
+  group_by(responder) %>%
+  dplyr::summarize(mean = mean(BMI),
+            sd = sd(BMI))
+
+NAMS.BMI %>% 
+  group_by(timepoint) %>%
+  pairwise_wilcox_test(
+    formula = BMI ~ responder, 
+    paired = FALSE)
+
+### differences over time
+NAMS.BMI %>% 
+  group_by(responder) %>%
+  pairwise_wilcox_test(
+    formula = BMI ~ timepoint, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+
+################
+#### plot features at baseline
+##########################
+
+NAMS.BMI %>%
+  filter(timepoint == "baseline") %>%
+  ggplot(aes(x = responder, y = sys_mean, fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "sys BP (mmHg)") -> fig.5.NAMS.responder.sys.bp
+
+fig.5.NAMS.responder.sys.bp
+#ggsave("fig.5.NAMS.responder.sys.bp.pdf", plot = fig.5.NAMS.responder.sys.bp, width = 3, height = 5)
+
+NAMS.BMI %>%
+  filter(timepoint == "baseline") %>%
+  ggplot(aes(x = responder, y = ldl, fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "LDL (mg/dL)") -> fig.5.NAMS.responder.ldl
+
+fig.5.NAMS.responder.ldl
+#ggsave("fig.5.NAMS.responder.ldl.pdf", plot = fig.5.NAMS.responder.ldl, width = 3, height = 5)
+
+NAMS.BMI %>%
+  filter(timepoint == "baseline") %>%
+  ggplot(aes(x = responder, y = Oscillibacter.sp..57_20., fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Abundance") -> fig.5.NAMS.oscilli
+
+fig.5.NAMS.oscilli
+#ggsave("fig.5.NAMS.oscilli.pdf", plot = fig.5.NAMS.oscilli, width = 3, height = 5)
+
+NAMS.BMI %>%
+  filter(timepoint == "baseline") %>%
+  ggplot(aes(x = responder, y = NA.Faecalibacterium.species.incertae.sedis, fill = responder)) + 
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Abundance") -> fig.5.NAMS.faecali
+
+fig.5.NAMS.faecali
+#ggsave("fig.5.NAMS.faecali.pdf", plot = fig.5.NAMS.faecali, width = 3, height = 5)
+
+NAMS.stats <- pivot_longer(NAMS.BMI, cols = c(sys_mean, ldl, Oscillibacter.sp..57_20., NA.Faecalibacterium.species.incertae.sedis), names_to = "feature", values_to = "value")
+NAMS.stats$feature <- as.factor(NAMS.stats$feature)
+NAMS.stats %>%
+  group_by(feature) %>%
+  pairwise_wilcox_test(formula = value ~ responder, paired = FALSE) -> NAMS.stats
+
+library(writexl)
+#write_xlsx(NAMS.stats, "NAMS.stats.xlsx")
+```
+
+## Baseline characteristics in NAMS
+```{r}
+bmi.over.30 <- NAMS.model %>%
+  filter(bmi_v0 > 30)
+## we have 22 patients in total
+(1/22)*100
+
+bp.over.140 <- NAMS.model %>%
+  filter(sys_mean > 140)
+## we have 22 patients in total
+(2/22)*100
+
+ldl.over.35 <- NAMS.model %>%
+  filter(ldl > 135)
+## we have 22 patients in total
+(4/22)*100
+
+```
+
+
+## Show correlation of features in NAMS
+```{r}
+# select feature for correlation matrix
+cor_features <- NAMS.model %>% 
+  select(Oscillibacter.sp..57_20.,
+         NA.Faecalibacterium.species.incertae.sedis,
+         sys_mean,
+         ldl,
+         bmi_v0)
+
+cor_names <- cor_features
+colnames(cor_features) <- c("Oscilli sp.\n57_20", 
+           "Faecali sp.\nincertae sedis", 
+           "Sys BP", 
+           "LDL", 
+           "BMI")
+library(Hmisc)
+cor_test_result <- rcorr(as.matrix(cor_features, type = "spearman"))  
+#the data might not be normal distributed
+
+print(cor_test_result$r)  
+print(cor_test_result$P) 
+cor_test_result$P[is.na(cor_test_result$P)] <- 1 
+
+# Extract the correlation matrix (r) and p-value matrix (P)
+cor_matrix <- cor_test_result$r  
+p_matrix <- cor_test_result$P    
+
+library(corrplot)
+corrplot(cor_matrix, 
+         type = "upper",         
+         order = "hclust",       
+         p.mat = p_matrix,       
+         sig.level = 0.05,       
+         insig = "blank") 
+
+#svg("fig.5.corrplot.NAMS.significant.only.svg", width = 8, height = 8)
+corrplot(cor_matrix, 
+         type = "upper",         
+         order = "hclust",       
+         p.mat = p_matrix,       
+         sig.level = 0.05,       
+         insig = "blank",        
+         tl.col = "black",       
+         tl.srt = 45,            
+         tl.cex = 0.8,           
+         cl.cex = 0.8,           
+         addCoef.col = "black",  
+         number.cex = 0.7,       
+         col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(100), 
+         mar = c(0, 0, 1, 0))
+#dev.off()
+
+#svg("fig.5.corrplot.NAMS.svg", width = 8, height = 8)
+corrplot(cor_matrix, type = "upper", order = "hclust", 
+         tl.col = "black", tl.cex = 1.5, cl.cex = 1.3,
+         number.cex = 1.5)
+#dev.off()
+
+###### square plot
+library(ggcorrplot)
+cor_matrix <- cor_test_result$r
+p_matrix <- cor_test_result$P
+p_matrix[is.na(p_matrix)] <- 1  
+
+# Plot
+fig.5.NAMS.heatmap <- ggcorrplot(cor_matrix,
+           method = "square",        
+           type = "upper",           
+           lab = TRUE,               
+           lab_size = 6,             
+           colors = c("#0075DC", "white", "#E64B35FF"),  
+           tl.cex = 1.5,             
+           legend.title = "Corr",    
+           ggtheme = theme_minimal(base_size = 24)) + 
+  theme(legend.text = element_text(size = 20),
+        legend.title = element_text(size = 24),
+        axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        plot.title = element_text(size = 24))
+
+fig.5.NAMS.heatmap
+```

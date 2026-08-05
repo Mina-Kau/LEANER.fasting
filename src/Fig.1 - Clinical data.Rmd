@@ -1,0 +1,1361 @@
+---
+title: "Fig.1 - Clinical data"
+author: "Gelsomina Nicola Kaufhold"
+date: "2025-06-18"
+output: html_document
+---
+
+# Figure 2: Proof of concept that fasting worked
+
+# Preperation
+
+## Load required packages
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(phyloseq)
+library(tidyverse)
+library(readxl)
+library(ggrain)
+library(rstatix)
+library(readxl)
+library(dplyr)
+```
+
+
+## Adjust themes for plotting
+
+```{r warning=FALSE}
+#ggsave("Fig.3.V1.V2.comparison.beta.diversity.pdf", plot = Fig.3.V1.V2.comparison.beta.diversity, width = 5, height = 5)
+boxplot.theme.legend <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black",angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "top")
+
+boxplot.theme <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+
+boxplot.theme.2 <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+
+
+########################################
+### setting colors
+#########################################
+
+color.scale.4 <- scale_fill_manual(values = c(
+  "baseline 0" = "#FFD700",  # Baseline 0
+  "baseline" = "#E69F00",    # Baseline 1
+  "fasting" = "#CC79A7",     # Fasting
+  "follow-up" = "#0072B2"    # Follow-up
+))
+
+color.scale.3 <- scale_fill_manual(values = c(
+  "baseline" = "#E69F00",    # Baseline 1
+  "fasting" = "#CC79A7",     # Fasting
+  "follow-up" = "#0072B2"    # Follow-up
+))
+
+color.fill.sex <- scale_fill_manual(values = c(
+  "male" = "#998ec3",    
+  "female" = "#5ab4ac"))
+
+```
+
+# Metadata: Physical changes to fasting
+
+
+## Prepare data
+
+```{r warning=FALSE}
+#### Prepare data
+sample.data <- read_excel("rowdata/raw_data_redcap_HB.xlsx")
+sample.data <- sample.data %>%
+  rename(`Probanden_ID`= "Probanden-ID")
+
+sample.data$timepoint <- sample.data$Visite
+
+sample.data$Visite <- factor(sample.data$Visite,
+                              levels = c("1", "2", "3", "4"),
+                              labels = c("baseline 0", "baseline 1", "fasting", "follow-up"))
+
+
+## ad weight to meta data to calculate BMI
+hight <- read_excel("rowdata/weight.xlsx", 
+    col_names = FALSE)
+
+hight <- hight[ , c(7, 11,9)]
+colnames(hight) <- c("proband_id", "Hight", "Sex")
+
+meta.all <- sample.data %>%
+  left_join(hight, by = c("Probanden_ID" = "proband_id"))
+
+meta.all.bmi <- meta.all %>%
+  dplyr::mutate(Hight = Hight / 100) %>%
+  mutate(BMI = koerpergewicht / (Hight^2))
+
+rownames(meta.all.bmi) <- meta.all.bmi$Novogene_ID
+
+meta.all.bmi$BMI <- as.numeric(meta.all.bmi$BMI)
+
+sample.data.all <- meta.all.bmi
+
+
+sample.data.all$Sex <- factor(sample.data.all$Sex,
+                              levels = c("w", "m"),
+                              labels = c("female", "male"))
+#saveRDS(sample.data.all, "rowdata/sample.data.all.rds")
+
+```
+
+## Physical changes to fasting
+raincloud plots by: Allen, M., Poggiali, D., Whitaker, K., Marshall, T. R., van Langen, J., & Kievit, R. A. Raincloud plots: a multi-platform tool for robust data visualization Wellcome Open Research 2021, 4:63. https://doi.org/10.12688/wellcomeopenres.15191.2
+
+
+```{r echo=TRUE, warning=FALSE}
+#################
+## Changes in BMI
+#################
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = BMI, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "BMI") ->  bmi.fasting.plot
+ bmi.fasting.plot
+
+##################
+###### statistics
+##################
+ 
+ 
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(BMI),
+            sd = sd(BMI))
+
+#### significance
+
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = BMI ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = BMI ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_BMI <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_BMI
+
+
+BMI_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_BMI = mean(BMI, na.rm = TRUE),
+    sd_BMI = sd(BMI, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_BMI <- combined_results_BMI %>%
+  left_join(BMI_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_BMI,
+    sd_group1 = sd_BMI
+  )
+
+combined_results_BMI <- combined_results_BMI %>%
+  left_join(BMI_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_BMI,
+    sd_group2 = sd_BMI
+  )
+
+####################################
+## Changes in systolic blood pressure
+#####################################
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = sys_mean, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "Sys BP") -> bp.sys.fasting.plot
+bp.sys.fasting.plot
+
+######################
+####### statistics
+####################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(sys_mean),
+            sd = sd(sys_mean))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = sys_mean ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = sys_mean ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_sysbp <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_sysbp
+
+sysbp_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_sysbp = mean(sys_mean, na.rm = TRUE),
+    sd_sysbp = sd(sys_mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_sysbp <- combined_results_sysbp %>%
+  left_join(sysbp_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_sysbp,
+    sd_group1 = sd_sysbp
+  )
+
+combined_results_sysbp <- combined_results_sysbp %>%
+  left_join(sysbp_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_sysbp,
+    sd_group2 = sd_sysbp
+  )
+
+# View combined results
+combined_results_sysbp
+
+###############
+## body fat
+##############
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = koerperfett, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "Body fat in %") -> koerperfett.fasting.plot
+koerperfett.fasting.plot
+
+
+######################
+####### statistics
+######################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(koerperfett),
+            sd = sd(koerperfett))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = koerperfett ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = koerperfett ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_bodyfat <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_bodyfat
+
+
+bodyfat_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_bodyfat = mean(koerperfett, na.rm = TRUE),
+    sd_bodyfat = sd(koerperfett, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_bodyfat <- combined_results_bodyfat %>%
+  left_join(bodyfat_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_bodyfat,
+    sd_group1 = sd_bodyfat
+  )
+
+combined_results_bodyfat <- combined_results_bodyfat %>%
+  left_join(bodyfat_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_bodyfat,
+    sd_group2 = sd_bodyfat
+  )
+
+# View combined results
+combined_results_bodyfat
+
+
+#########################
+##### bodyfat in absolute values
+#########################
+sample.data.all$bodyfat_absolute <- sample.data.all$koerpergewicht*(sample.data.all$koerperfett/100)
+
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = bodyfat_absolute, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "Body fat in kg") -> bodyfat_absolute.fasting.plot
+bodyfat_absolute.fasting.plot
+
+
+######################
+####### statistics
+######################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(bodyfat_absolute),
+            sd = sd(bodyfat_absolute))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = bodyfat_absolute ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = bodyfat_absolute ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_bodyfat_absolute <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_bodyfat_absolute
+
+
+bodyfat_absolute_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_bodyfat = mean(bodyfat_absolute, na.rm = TRUE),
+    sd_bodyfat = sd(bodyfat_absolute, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_bodyfat_absolute <- combined_results_bodyfat_absolute %>%
+  left_join(bodyfat_absolute_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_bodyfat,
+    sd_group1 = sd_bodyfat
+  )
+
+combined_results_bodyfat_absolute <- combined_results_bodyfat_absolute %>%
+  left_join(bodyfat_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_bodyfat,
+    sd_group2 = sd_bodyfat
+  )
+
+# View combined results
+combined_results_bodyfat_absolute
+
+
+
+
+
+
+###############
+## lean mass
+#############
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = fettfreie_masse, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "Lean mass in %") -> leanmass.fasting.plot
+leanmass.fasting.plot
+
+#########################
+### statistics
+####################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(fettfreie_masse),
+            sd = sd(fettfreie_masse))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = fettfreie_masse ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = fettfreie_masse ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_leanmass <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_leanmass
+
+leanmass_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_leanmass = mean(fettfreie_masse, na.rm = TRUE),
+    sd_leanmass = sd(fettfreie_masse, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_leanmass <- combined_results_leanmass %>%
+  left_join(leanmass_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_leanmass,
+    sd_group1 = sd_leanmass
+  )
+
+combined_results_leanmass <- combined_results_leanmass %>%
+  left_join(leanmass_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_leanmass,
+    sd_group2 = sd_leanmass
+  )
+
+# View combined results
+combined_results_leanmass
+
+###########################
+######## asbolute leanmass
+#############################
+sample.data.all$leanmass_absolute <- sample.data.all$koerpergewicht*(sample.data.all$fettfreie_masse/100)
+
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = leanmass_absolute, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "Leanmass in kg") -> leanmass_absolute.fasting.plot
+leanmass_absolute.fasting.plot
+
+
+######################
+####### statistics
+######################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(leanmass_absolute),
+            sd = sd(leanmass_absolute))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = leanmass_absolute ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = leanmass_absolute ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_leanmass_absolute <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_leanmass_absolute
+
+
+leanmass_absolute_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_leanmass_absolute = mean(leanmass_absolute, na.rm = TRUE),
+    sd_leanmass_absolute = sd(leanmass_absolute, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_leanmass_absolute <- combined_results_leanmass_absolute %>%
+  left_join(leanmass_absolute_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_leanmass_absolute,
+    sd_group1 = sd_leanmass_absolute
+  )
+
+combined_results_leanmass_absolute <- combined_results_leanmass_absolute %>%
+  left_join(leanmass_absolute_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_leanmass_absolute,
+    sd_group2 = sd_leanmass_absolute
+  )
+
+# View combined results
+combined_results_leanmass_absolute
+
+
+############################
+######### WHR
+##########################
+
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = WHR, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "WHR") -> WHR.fasting.plot
+WHR.fasting.plot
+#########################
+### statistics
+####################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(WHR),
+            sd = sd(WHR))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = WHR ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = WHR ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_WHR <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+combined_results_WHR
+
+WHR_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_WHR = mean(WHR, na.rm = TRUE),
+    sd_WHR = sd(WHR, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_WHR <- combined_results_WHR %>%
+  left_join(WHR_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_WHR,
+    sd_group1 = sd_WHR
+  )
+
+combined_results_WHR <- combined_results_WHR %>%
+  left_join(WHR_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_WHR,
+    sd_group2 = sd_WHR
+  )
+
+# View combined results
+combined_results_WHR
+
+
+
+####################
+######## diastolic blood pressure
+##################
+
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = bp_dia_mean, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "Dia BP") -> bp.dia.mean.fasting.plot
+bp.dia.mean.fasting.plot
+
+#########################
+### statistics
+####################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(bp_dia_mean),
+            sd = sd(bp_dia_mean))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = bp_dia_mean ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = bp_dia_mean ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_diabp <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+combined_results_diabp
+
+diabp_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_diabp = mean(bp_dia_mean, na.rm = TRUE),
+    sd_diabp = sd(bp_dia_mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_diabp <- combined_results_diabp %>%
+  left_join(diabp_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_diabp,
+    sd_group1 = sd_diabp
+  )
+
+combined_results_diabp <- combined_results_diabp %>%
+  left_join(diabp_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_diabp,
+    sd_group2 = sd_diabp
+  )
+
+# View combined results
+combined_results_diabp
+
+
+####################
+######## Heart rate
+##################
+
+sample.data.all %>%
+  ggplot(aes(x = Visite, y = bp_bpm_mean, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "Heart rate") -> heartrate.fasting.plot
+heartrate.fasting.plot
+
+#########################
+### statistics
+####################
+
+###### mean, sd
+sample.data.all %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(bp_bpm_mean),
+            sd = sd(bp_bpm_mean))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = bp_bpm_mean ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- sample.data.all %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = bp_bpm_mean ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_hr <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+combined_results_hr
+
+hr_summary <- sample.data.all %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_hr = mean(bp_bpm_mean, na.rm = TRUE),
+    sd_hr = sd(bp_bpm_mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_hr <- combined_results_hr %>%
+  left_join(hr_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_hr,
+    sd_group1 = sd_hr
+  )
+
+combined_results_hr <- combined_results_hr %>%
+  left_join(hr_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_hr,
+    sd_group2 = sd_hr
+  )
+
+# View combined results
+combined_results_hr
+
+```
+## Changes in REE and RER
+```{r}
+##########################
+### Changes in REE
+#######################
+REE <- sample.data.all %>%
+  select(Probanden_ID, Sex, Visite, rnu_kcal_d)
+
+###### boxplots
+REE %>%
+  ggplot(aes(x = Visite, y = rnu_kcal_d, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  color.scale.4 +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  boxplot.theme +
+  labs(y = "REE") -> fig.1.REE
+fig.1.REE
+
+#### violine plots
+REE %>%
+ggplot(aes(x = Visite, y = rnu_kcal_d, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "REE") -> fig.1.REE.violine
+fig.1.REE.violine
+
+###################
+##### statistics
+##################
+
+###### mean, sd
+REE %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(rnu_kcal_d),
+            sd = sd(rnu_kcal_d))
+
+#### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- REE %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = rnu_kcal_d ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- REE %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = rnu_kcal_d ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_REE <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_REE
+
+REE_summary <- REE %>%
+  dplyr::group_by(Visite) %>%
+  summarize(
+    mean_REE = mean(rnu_kcal_d, na.rm = TRUE),
+    sd_REE = sd(rnu_kcal_d, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_REE <- combined_results_REE %>%
+  left_join(REE_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_REE,
+    sd_group1 = sd_REE
+  )
+
+combined_results_REE <- combined_results_REE %>%
+  left_join(REE_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_REE,
+    sd_group2 = sd_REE
+  )
+
+
+##########################
+### Changes in RER
+#######################
+RER <- sample.data.all %>%
+  select(Probanden_ID, Sex, Visite, rer)
+  
+RER %>%
+  ggplot(aes(x = Visite, y = rer, fill = Visite)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  color.scale.4 +
+  geom_point(size = 3,position = position_jitter(width = 0), alpha=0.5) +
+  boxplot.theme +
+  labs(y = "RER") -> fig.1.RER
+fig.1.RER
+
+#### violine plots
+
+RER %>%
+ggplot(aes(x = Visite, y = rer, fill = Sex)) +
+  geom_line(aes(group = Probanden_ID), color = "black", alpha = 0.3) +
+    geom_rain(alpha = 0.5,
+              shape = 21,
+              point.args = list(size = 3, shape = 21),
+              boxplot.args = list(fill = "gray80", color = "black", outlier.shape = NA)) +
+  color.fill.sex +
+  boxplot.theme.legend +
+  labs(y = "RER") -> fig.1.RER.violine
+
+####################
+####### statistics
+###################
+
+###### mean, sd
+RER <- data.frame(RER)
+RER %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(rer),
+            sd = sd(rer))
+
+### significance
+# ---- Part 1: Compare Group 1 vs. Group 2 ----
+# Filter to subjects that have measurements in both group 1 and group 2
+data_1_2 <- RER %>%
+  filter(Visite %in% c("baseline 0", "baseline 1")) %>%
+  group_by(Probanden_ID) %>%
+  filter(n_distinct(Visite) == 2) %>%
+   mutate(Visite = factor(Visite, levels = c("baseline 0", "baseline 1"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon test for group 1 vs 2
+result_1_2 <- data_1_2 %>%
+  pairwise_wilcox_test(
+    formula = rer ~ Visite,
+    paired = TRUE,
+    p.adjust.method = "none"
+  )
+
+
+# ---- Part 2: Compare Groups 2, 3, and 4 ----
+# Filter to subjects with complete data in groups 2, 3, and 4
+data_2_3_4 <- RER %>%
+  filter(Visite %in% c("baseline 1", "fasting", "follow-up")) %>%
+  group_by(Probanden_ID) %>%
+  # Keep only subjects with all three visits
+  filter(length(unique(Visite)) == 3) %>%
+  mutate(Visite = factor(Visite, levels = c("baseline 1", "fasting", "follow-up"))) %>%
+  ungroup()
+
+# Perform the paired Wilcoxon tests for all pairwise comparisons among groups 2, 3, and 4
+result_2_3_4 <- data_2_3_4 %>%
+  pairwise_wilcox_test(
+    formula = rer ~ Visite,
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "none"  # Again, postpone adjustment
+  )
+
+# ---- Combine and Adjust p-values ----
+# Bind the two sets of results and then adjust the combined p-values with holm
+combined_results_RER <- bind_rows(result_1_2, result_2_3_4) %>%
+  mutate(p.adj = p.adjust(p, method = "holm"))
+
+# View combined results
+combined_results_RER
+
+## add mean and sd for each group comparison
+rer_summary <- RER %>%
+  group_by(Visite) %>%
+  summarize(
+    mean_rer = mean(rer, na.rm = TRUE),
+    sd_rer = sd(rer, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+combined_results_RER <- combined_results_RER %>%
+  left_join(rer_summary, by = c("group1" = "Visite")) %>%
+  rename(
+    mean_group1 = mean_rer,
+    sd_group1 = sd_rer
+  )
+
+combined_results_RER <- combined_results_RER %>%
+  left_join(rer_summary, by = c("group2" = "Visite")) %>%
+  rename(
+    mean_group2 = mean_rer,
+    sd_group2 = sd_rer
+  )
+
+```
+
+## Create table to summarize all results
+
+```{r}
+statistics.complete <- rbind(combined_results_BMI, combined_results_bodyfat, combined_results_bodyfat_absolute, combined_results_leanmass, combined_results_leanmass_absolute, combined_results_WHR, combined_results_hr, combined_results_sysbp, combined_results_diabp, combined_results_REE, combined_results_RER)
+
+statistics.complete
+
+## store as xlsx file
+library(writexl)
+#write_xlsx(statistics.complete, "statistics_results.xlsx")
+```
+
+## Over time metadata
+
+### Glucose
+```{r}
+Glucose <- read_excel("rowdata/meta data/Glucose_data.xlsx")
+Glucose_long <- pivot_longer(Glucose, cols = c(4:ncol(Glucose)), names_to = "Probanden_ID", values_to = "Glucose")
+
+df_summary <- Glucose_long %>%
+  group_by(Day, Morning_Evening) %>%
+  dplyr::summarize(
+    mean_glucose = mean(Glucose, na.rm = TRUE),
+    sd_glucose   = sd(Glucose, na.rm = TRUE),
+    n            = sum(!is.na(Glucose)),
+    se_glucose   = sd_glucose / sqrt(n),  # standard error
+    .groups      = "drop"
+  )
+
+time_levels <- c(
+  "Day 1 M", "Day 1 E", 
+  "Day 2 M", "Day 2 E",
+  "Day 3 M", "Day 3 E",
+  "Day 4 M", "Day 4 E",
+  "Day 5 M", "Day 5 E",
+  "Day 6 M", "Day 6 E",
+  "Day 7 M", "Day 7 E"
+)
+
+df_summary <- df_summary %>%
+  mutate(DayTime = paste0("Day ", Day, " ", Morning_Evening),
+         DayTime = factor(DayTime, levels = time_levels))
+
+ggplot(df_summary, aes(x = DayTime, y = mean_glucose, group = 1)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  geom_errorbar(
+    aes(
+      ymin = mean_glucose - se_glucose,
+      ymax = mean_glucose + se_glucose
+    ),
+    width = 0.2,
+    color = "steelblue"
+  ) +
+  labs(
+    x = "Day and time",
+    y = "Glucose (mg/dL)"
+  ) +
+  theme_classic(base_size = 24) +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) -> fig.1.glucose.over.time
+fig.1.glucose.over.time
+
+```
+
+### beta-hydroxybutyrate
+
+```{r}
+BHB <- read_excel("rowdata/meta data/BHB_data.xlsx")
+BHB_long <- pivot_longer(BHB, cols = c(4:ncol(BHB)), names_to = "Probanden_ID", values_to = "BHB")
+
+df_summary <- BHB_long %>%
+  group_by(Day, Morning_Evening) %>%
+  dplyr::summarize(
+    mean_BHB = mean(BHB, na.rm = TRUE),
+    sd_BHB   = sd(BHB, na.rm = TRUE),
+    n            = sum(!is.na(BHB)),
+    se_BHB   = sd_BHB / sqrt(n),  # standard error
+    .groups      = "drop"
+  )
+
+time_levels <- c(
+  "Day 1 M", "Day 1 E", 
+  "Day 2 M", "Day 2 E",
+  "Day 3 M", "Day 3 E",
+  "Day 4 M", "Day 4 E",
+  "Day 5 M", "Day 5 E",
+  "Day 6 M", "Day 6 E",
+  "Day 7 M", "Day 7 E"
+)
+
+df_summary <- df_summary %>%
+  mutate(DayTime = paste0("Day ", Day, " ", Morning_Evening),
+         DayTime = factor(DayTime, levels = time_levels))
+
+ggplot(df_summary, aes(x = DayTime, y = mean_BHB, group = 1)) +
+  geom_line(color = "steelblue", size = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  geom_errorbar(
+    aes(
+      ymin = mean_BHB - se_BHB,
+      ymax = mean_BHB + se_BHB
+    ),
+    width = 0.2,
+    color = "steelblue"
+  ) +
+  labs(
+    x = "Day and time",
+    y = "BHB (mmmol/L)"
+  ) +
+  theme_classic(base_size = 24) +
+  theme(
+    axis.text = element_text(color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) -> fig.1.BHB.over.time
+fig.1.BHB.over.time
+```
+

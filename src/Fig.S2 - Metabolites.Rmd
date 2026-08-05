@@ -1,0 +1,1415 @@
+---
+title: "Fig. S2 - Metabolites"
+author: "Gelsomina Nicola Kaufhold"
+date: "2025-06-18"
+output: html_document
+---
+
+# Fig. S2 - Metabolomics
+
+# Preperation
+## Laoding required packages
+```{r message=FALSE, warning=FALSE}
+library(phyloseq)
+library(tidyverse)
+library(rstatix)
+library(coin)
+library(microbiome)
+library(ggpubr)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+```
+
+## Load data
+
+### Prepare blood data
+```{r}
+PS.tree <- readRDS("rowdata/PS.tree.rds")
+sample.data <- data.frame(sample_data(PS.tree))
+library(readxl)
+blood <- read_excel("rowdata/metabolomics/QuantPS_2_2023_02_17_metabo.xlsx")
+trans <- read_excel("rowdata//metabolomics/NMR2023_sample_translation.xlsx")
+
+# Select all columns that contain "Conc." in their names
+blood <- blood %>%
+  select(sampleId, measurementDate, reportingDate, contains("Conc."))
+
+blood <- blood %>%
+  mutate(sampleId = str_extract(sampleId, "P_\\d{3}"))
+blood$measurementDate <- NULL
+blood$reportingDate <- NULL
+
+trans_clean <- trans %>%
+  mutate(
+    sampleId = Prob_ID,
+    PatID = str_replace(Prob_ID, "LEANER-(\\d+)_V(\\d+)", "V\\2_\\1")
+  ) %>%
+  select(PatID, sampleId, everything())
+
+trans_clean <- trans_clean %>%
+  mutate(NMR_sampleId = sprintf("P_%03d", NMR_ID))
+
+# Now join the two dataframes on this common ID
+combined <- trans_clean %>%
+  left_join(blood, by = c("NMR_sampleId" = "sampleId"))
+
+# Optional: reorder columns
+combined <- combined %>%
+  select(PatID, sampleId, everything(), -NMR_sampleId)
+
+combined$Prob_ID <- NULL
+combined$NMR_ID <- NULL
+combined$NMR_sampleId <- NULL
+
+NMR_blood <- combined
+NMR_blood$PatID <- gsub(NMR_blood$PatID, pattern = "_", replacement = ".")
+NMR_blood <- NMR_blood %>%
+  column_to_rownames(var = "PatID")
+NMR_blood$sampleId <- NULL
+common <- rownames(sample.data)[rownames(sample.data) %in% rownames(NMR_blood)]
+NMR_blood <- NMR_blood[match(common, rownames(NMR_blood)), ]
+NMR_blood$`K-EDTA (Conc.) [mmol/L]`<- NULL
+NMR_blood$`Ca-EDTA (Conc.) [mmol/L]` <- NULL
+```
+
+
+```{r}
+
+lipids <- read.csv("~/Documents/MDC/LEANER/Microbiome/Masterarbeit/Figures/rowdata/metabolomics/2429_lipid_prep.csv")
+## adapt data so that it fits to sample.data
+rownames(lipids) <- gsub(x = rownames(lipids), pattern = "_", replacement = ".")
+lipids$PatID <- NULL
+# Get the row names that are in sample.data, in the order they appear there
+common <- rownames(sample.data)[rownames(sample.data) %in% rownames(lipids)]
+
+# Subset and reorder lipids to match these row names
+lipids <- lipids[match(common, rownames(lipids)), ]
+
+
+## how many NAs in the data
+NMR_blood$na_percentage <- rowMeans(is.na(NMR_blood)) * 100
+col_na_percentage_blood <- colMeans(is.na(NMR_blood)) * 100
+NMR_blood_NA <- rbind(NMR_blood, col_na_percentage_blood)
+# we reomove all colums which have more than 30% NA
+NMR_blood_filtered <- NMR_blood_NA[, col_na_percentage_blood <= 30]
+dim(NMR_blood_filtered)
+dim(NMR_blood_NA)
+NMR_blood_filtered <- NMR_blood_filtered[-nrow(NMR_blood_filtered), -ncol(NMR_blood_filtered)]
+# we impute NA by the lowest detected values divided by square root of 2 because lowest number of detection is not known
+NMR_blood_imputed <- NMR_blood_filtered %>% 
+  mutate(across(where(is.numeric), ~ replace(., is.na(.), min(., na.rm = TRUE) / sqrt(2))))
+
+##########
+#### stool
+###########
+NMR_stool <- read.csv("~/Documents/MDC/LEANER/Microbiome/Masterarbeit/Figures/rowdata/metabolomics/24531NMR_stool.csv")
+rownames(NMR_stool) <- gsub(rownames(NMR_stool), pattern = "_", replacement = ".")
+NMR_stool$pad_id <- NULL
+NMR_stool$ID <- NULL
+common <- rownames(sample.data)[rownames(sample.data) %in% rownames(NMR_stool)]
+NMR_stool <- NMR_stool[match(common, rownames(NMR_stool)), ]
+
+NMR_stool$na_percentage <- rowMeans(is.na(NMR_stool)) * 100
+col_na_percentage_stool <- colMeans(is.na(NMR_stool)) * 100
+NMR_stool_NA <- rbind(NMR_stool, col_na_percentage_blood)
+
+# we reomove all colums which have more than 30% NA
+NMR_stool_filtered <- NMR_stool_NA[, col_na_percentage_stool <= 30]
+dim(NMR_stool_filtered)
+dim(NMR_stool_NA)
+NMR_stool_filtered <- NMR_stool_filtered[-nrow(NMR_stool_filtered), -ncol(NMR_stool_filtered)]
+# we impute NA by the lowest detected values divided by square root of 2 because lowest number of detection is not known
+NMR_stool_imputed <- NMR_stool_filtered %>% 
+  mutate(across(where(is.numeric), ~ replace(., is.na(.), min(., na.rm = TRUE) / sqrt(2))))
+
+```
+
+## Stool
+
+### Display as PC
+
+```{r}
+###########
+# For PCA:
+#############
+NMR_stool_clean <- NMR_stool_imputed
+NMR_stool_clean[is.na(NMR_stool_clean)] <- 0
+
+proteomics_scaled <- scale(NMR_stool_clean, center = TRUE, scale = TRUE)
+pca_res <- prcomp(proteomics_scaled)
+# Calculate variance explained for each PC
+pca_var <- pca_res$sdev^2
+pca_var_perc <- round(100 * pca_var / sum(pca_var), 1)
+
+# Merge PCA scores with metadata:
+pca_scores <- as.data.frame(pca_res$x)
+pca_scores$Proben_ID_Novogene <- rownames(pca_scores)
+
+sample.data <- data.frame(sample_data(PS.tree))
+meta.clean <- sample.data[rownames(sample.data) %in% rownames(NMR_stool_clean), ] %>%
+  select(Proben_ID_Novogene, Visite, Probanden_ID)
+
+pca_scores <- merge(meta.clean, pca_scores, by = "Proben_ID_Novogene")
+
+centroids <- pca_scores %>%
+  group_by(Visite) %>%
+  dplyr::summarize(
+    PC1 = mean(PC1, na.rm = TRUE),
+    PC2 = mean(PC2, na.rm = TRUE)
+  )
+
+################
+#####Build the plot
+####################
+ggplot(pca_scores, aes(x = PC1, y = PC2)) +
+  stat_ellipse(aes(color = Visite, fill = Visite),
+               geom = "polygon",
+               alpha = 0.1,
+               level = 0.95,
+               linetype = 1) +
+  geom_point(aes(color = Visite),
+             size = 3,
+             alpha = 0.7) +
+  geom_point(data = centroids,
+             aes(fill = Visite),
+             shape = 21,
+             color = "black",
+             stroke = 1.0,
+             size = 6) +
+  scale_color_manual("Visite",
+                     values = c("baseline 1" = "#E69F00", 
+                                "fasting" = "#CC79A7", 
+                                "follow-up" = "#0072B2")) +
+  scale_fill_manual("Visite",
+                    values = c("baseline 1" = "#E69F00", 
+                               "fasting" = "#CC79A7", 
+                               "follow-up" = "#0072B2")) +
+  labs(
+    x = paste0("PC1 (", pca_var_perc[1], "% variance)"),
+    y = paste0("PC2 (", pca_var_perc[2], "% variance)")
+  ) +
+    ylim(-8, 8) +
+  xlim(-10, 10) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24, color = "black"),
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_text(size = 24, color = "black"),
+    axis.title.x = element_text(size = 24, color = "black"),
+    axis.line = element_line(size = 1),
+    legend.position = "top"
+  ) -> fig.S2stool.nmr.pc.plot
+
+fig.S2stool.nmr.pc.plot
+
+
+#####################
+###### statistics
+##################
+library(tibble)
+library(dplyr)
+
+pca_scores <- as.data.frame(pca_res$x)
+pca_scores <- pca_scores %>% rownames_to_column(var = "SampleID")
+sample.data <- sample.data %>% rownames_to_column(var = "SampleID")
+
+merged_data <- merge(pca_scores, sample.data, by = "SampleID")
+
+
+manova_res <- manova(cbind(PC1, PC2) ~ Visite, data = merged_data)
+summary(manova_res, test = "Pillai")
+
+### only test between baseline and fasting
+merged_fasting <- merged_data %>%
+  filter(Visite != "follow-up")
+
+manova_res <- manova(cbind(PC1, PC2) ~ Visite, data = merged_fasting)
+summary(manova_res, test = "Pillai")
+
+```
+
+### Centered stool metabolites
+```{r}
+###############
+##### stool
+##############
+NMR_stool_clean <- NMR_stool_imputed %>%
+  rownames_to_column(var = "Proben_ID_Novogene")
+sample.data <- data.frame(sample_data(PS.tree))
+meta.clean <- sample.data[rownames(sample.data) %in% rownames(NMR_stool_imputed), ] %>%
+  select(Proben_ID_Novogene, Visite, Probanden_ID)
+
+df.abs.stool <- merge(meta.clean, NMR_stool_clean, by = "Proben_ID_Novogene")
+
+####################################### PCA ##########################
+pca_fit <- df.abs.stool  %>% 
+  dplyr::select(-c(1:3)) %>%  # retain only numeric columns --> loss of metadata
+  dplyr::select_if(~sd(.) != 0) %>%
+  scale() %>% # scale data
+  prcomp() # do PCA
+
+eigenvalues <- pca_fit %>% tidy(matrix = "eigenvalues")
+
+pca_fit %>%
+  augment(df.abs.stool) %>% # Add the metadata back
+  ggplot(aes(.fittedPC1, .fittedPC2, color = Visite)) +
+  geom_path(aes(group = Probanden_ID), size = 1, color = "black") + # Connect dots for each Patient
+  geom_point(size = 5) +
+  xlab(paste("PC2 - ", eigenvalues$percent[1] * 100, "%", sep = "")) +
+  ylab(paste("PC3 - ", eigenvalues$percent[2] * 100, "%", sep = "")) +
+  theme_bw()
+
+
+# Compute relative coordinates
+df_centered <- pca_fit %>%
+  augment(df.abs.stool) %>% 
+  group_by(Probanden_ID) %>%
+  mutate(
+    BL_PC1 = .fittedPC1[Visite == "baseline 1"],
+    BL_PC2 = .fittedPC2[Visite == "baseline 1"],
+    Fast_PC1 = .fittedPC1[Visite == "fasting"],
+    Fast_PC2 = .fittedPC2[Visite == "fasting"],
+    rel_BL_PC1 = .fittedPC1 - BL_PC1,
+    rel_BL_PC2 = .fittedPC2 - BL_PC2,
+    rel_Fast_PC1 = .fittedPC1 - Fast_PC1,
+    rel_Fast_PC2 = .fittedPC2 - Fast_PC2
+  ) %>%
+  ungroup()
+
+
+# First layer: arrows from baseline to fasting
+df_arrows_bl_to_fast <- df_centered %>%
+  filter(Visite %in% c("baseline 1", "fasting")) %>%
+  select(Probanden_ID, Visite, rel_BL_PC1, rel_BL_PC2)
+
+
+df_arrows_bl_to_fast <- df_arrows_bl_to_fast %>%
+  pivot_wider(names_from = Visite, values_from = c(rel_BL_PC1, rel_BL_PC2)) %>%
+  rename(
+    x_start = "rel_BL_PC1_baseline 1",
+    y_start = "rel_BL_PC2_baseline 1",
+    x_end = rel_BL_PC1_fasting,
+    y_end = rel_BL_PC2_fasting
+  )
+
+# Second layer: arrows from fasting to follow-up
+df_arrows_fast_to_fu <- df_centered %>%
+  filter(Visite %in% c("fasting", "follow-up")) %>%
+  select(Probanden_ID, Visite, rel_Fast_PC1, rel_Fast_PC2)
+
+df_arrows_fast_to_fu <- df_arrows_fast_to_fu %>%
+  pivot_wider(names_from = Visite, values_from = c(rel_Fast_PC1, rel_Fast_PC2)) %>%
+  rename(
+    x_start = rel_Fast_PC1_fasting,
+    y_start = rel_Fast_PC2_fasting,
+    x_end = "rel_Fast_PC1_follow-up",
+    y_end = "rel_Fast_PC2_follow-up"
+  )
+
+
+```
+```{r}
+# Combine both arrows into one dataframe with type label
+df_bl_fast <- df_arrows_bl_to_fast %>% mutate(traj = "baseline to fasting")
+df_fast_fu <- df_arrows_fast_to_fu %>% mutate(traj = "fasting to follow-up")
+df_arrows_all <- bind_rows(df_bl_fast, df_fast_fu)
+
+# Calculate centroids (example: mean position for baseline and follow-up per group)
+arrowCentroids <- df_arrows_all %>%
+  group_by(traj) %>%
+  summarise(
+    V1 = mean(x_end),
+    V2 = mean(y_end),
+    V3 = mean(x_start),
+    V4 = mean(y_start),
+    .groups = "drop"
+  )
+
+# Define custom colors for the trajectory types
+traj_colors <- c("baseline to fasting" = "#CC79A7", "fasting to follow-up" = "#0072B2")
+
+# Build the styled plot
+fig.S2star.plot.stool <- ggplot() +
+  # Arrows between timepoints
+  geom_segment(data = df_arrows_all,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = traj),
+               arrow = arrow(length = unit(0.3, "cm")),
+               alpha = 0.5) +
+
+  # Starting points
+  geom_point(data = df_arrows_all, aes(x = x_start, y = y_start),
+             size = 4, alpha = 0.8, color = "#E69F00") +
+
+  # End points
+  geom_point(data = df_arrows_all, aes(x = x_end, y = y_end),
+             size = 3, alpha = 0.3, color = "#0072B2") + 
+  
+  # Centroid dots
+  geom_point(data = arrowCentroids, aes(x = V3, y = V4), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "#CC79A7", size = 5) +
+
+
+  # Mean segment for each trajectory
+  geom_segment(data = arrowCentroids,
+               aes(x = V3, y = V4, xend = V1, yend = V2),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black", size = 1) +
+
+  # Labels and styling
+  xlab("PC1") +
+  ylab("PC2") +
+  guides(color = guide_legend(title = "trajectory")) +
+  scale_color_manual(values = traj_colors) +
+  theme_classic() +
+  ylim(-8, 8) +
+  xlim(-10, 10) +
+  theme(
+    legend.position = "top",
+    axis.title = element_text(size = 24, color = "black"),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.line = element_line(size = 1),
+    legend.title = element_text(size = 24, color = "black"),
+    legend.text = element_text(size = 24, color = "black")
+  )
+
+fig.S2star.plot.stool
+```
+
+
+### Univariate Stool NMR
+```{r}
+NMR_comb <- NMR_stool_imputed %>%
+  rownames_to_column(var = "Proben_ID_Novogene")
+
+sample.data <- data.frame(sample_data(PS.tree))
+meta.clean <- sample.data[rownames(sample.data) %in% rownames(NMR_stool_imputed), ] %>%
+  select(Proben_ID_Novogene, Visite, Probanden_ID)
+
+NMR.comb <- merge(meta.clean, NMR_comb, by = "Proben_ID_Novogene")
+#saveRDS(NMR.comb, file = "scfa/NMR.comb.stool.rds")
+
+NMR.stool.long <- pivot_longer(NMR.comb, cols = c(4:ncol(NMR.comb)), names_to = "Protein", values_to = "Abundance")
+
+df_complete <- NMR.stool.long %>%
+  group_by(Protein, Probanden_ID) %>%
+  filter(n_distinct(Visite) == 3) %>%  # Keep only subjects with all 3 visits
+  ungroup()
+
+# Now perform the paired pairwise Wilcoxon tests across all visits
+result_stool <- df_complete %>% 
+  group_by(Protein) %>%
+  pairwise_wilcox_test(
+    formula = Abundance ~ Visite, 
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "BH"
+  )
+
+### extract signifcant results
+signif_results <- result_stool %>%
+  filter(p.adj < 0.1)
+
+print(signif_results)
+
+
+######################
+###### Plot #########
+#####################
+
+
+sig_Protein <- unique(signif_results$Protein)
+
+filtered_result <- result_stool %>%
+  filter(Protein %in% sig_Protein)
+
+
+all_comps_for_sig_Protein <- filtered_result %>%
+  rowwise() %>%
+  mutate(
+    cliff_delta = effsize::cliff.delta(
+      NMR.stool.long$Abundance[NMR.stool.long$Protein == Protein & NMR.stool.long$Visite == group2],
+      NMR.stool.long$Abundance[NMR.stool.long$Protein == Protein & NMR.stool.long$Visite == group1]
+    )$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(
+    is_significant = p.adj < 0.1,
+    Direction = case_when(
+      cliff_delta > 0 ~ "Increased",
+      cliff_delta < 0 ~ "Decreased",
+      TRUE            ~ "No change"
+    ),
+    effect_size = cliff_delta,
+    point_alpha = if_else(is_significant, 1, 0.4),
+    outline_color = if_else(is_significant, "black", "grey"),
+    Comparison = paste(group1, group2, sep = " vs ")
+  )
+
+# Clean up Protein names
+sig_plot_data <- all_comps_for_sig_Protein %>%
+  mutate(
+    # Temporarily protect ".sp." by replacing with a placeholder
+    Protein = gsub("\\.sp\\.", "##SP##", Protein),
+    # Replace all remaining dots with a space
+    Protein = gsub("\\.", " ", Protein),
+    # Restore the placeholder back to " sp."
+    Protein = gsub("##SP##", " sp.", Protein),
+    # Remove any parentheses
+    Protein = gsub("[\\(\\)]", "", Protein),
+    # Clean up extra spaces and trim
+    Protein = gsub("\\s+", " ", Protein),
+    Protein = trimws(Protein)
+  )
+
+sig_plot_data$Protein <- gsub(" _Conc.*", "", sig_plot_data$Protein)
+# Order comparisons on x-axis (optional)
+sig_plot_data$Comparison <- factor(sig_plot_data$Comparison,
+  levels = c("baseline 1 vs fasting", "fasting vs follow-up", "baseline 1 vs follow-up"))
+
+# Save as table for supplement
+library(writexl)
+write_xlsx(sig_plot_data, "sig_plot_data_Protein_stool.xlsx")
+
+# Extract ordering for Species based on the effect size from "baseline 1 vs fasting"
+order_protein <- sig_plot_data %>%
+  filter(Comparison == "baseline 1 vs fasting") %>%
+  arrange(effect_size) %>%
+  pull(Protein)
+
+# Update the Species factor levels based on the ordering from the baseline 1 vs fasting comparison
+sig_plot_data <- sig_plot_data %>%
+  mutate(Protein = factor(Protein, levels = order_protein))
+
+
+sig_plot_data <- sig_plot_data %>%
+  mutate(Protein = factor(Protein, levels = order_protein))
+
+# Plot the results using ggplot2
+ggplot(sig_plot_data, aes(
+  x = Comparison,
+  y = Protein  # Now already ordered based on baseline 1 vs fasting
+)) +
+  geom_point(
+    aes(
+      fill = Direction,         
+      size = abs(effect_size),  
+      alpha = point_alpha,     
+      color = outline_color     
+    ),
+    shape = 21,    
+    stroke = 0.8
+  ) +
+  scale_fill_manual(values = c("Increased" = "#0075DC", 
+                               "Decreased" = "#E64B35FF",
+                               "No change"  = "grey70")) +
+  scale_color_identity() +
+  scale_alpha_identity() +
+  scale_size_continuous(range = c(2, 6)) +
+  labs(
+    x = "Comparison",
+    y = "Metabolite",
+    fill = "Direction",
+    size = "|\u0394 Cliff's delta|"
+  ) +
+  theme_classic(base_size = 24) +
+  theme(
+    axis.text.y = element_text(color = "black"),
+    axis.text.x = element_text(color = "black", angle = 45, hjust = 1),
+    axis.title  = element_text(face = "bold"),
+    axis.title.x = element_blank(),
+    legend.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) -> fig.S2sig.Protein.stool.plot
+fig.S2sig.Protein.stool.plot
+#ggsave("fig.S2sig.Protein.stool.plot.pdf", plot = fig.S2sig.Protein.stool.plot, width = 6, height = 6)
+
+```
+
+### Test correlation with bacteria against stool metabolites
+```{r}
+view(NMR.comb)
+
+bacteria.data <- readRDS("rowdata/names.rds")
+
+bacteria.data <- data.frame(t(bacteria.data))
+oscilli <- bacteria.data %>%
+  select(Oscillibacter.sp..57_20., NA.Faecalibacterium.species.incertae.sedis) %>%
+  rownames_to_column(var = "Proben_ID_Novogene")
+
+combo_stool <- NMR.comb %>%
+  left_join(oscilli, by = "Proben_ID_Novogene")
+
+combo_stool_baseline <- combo_stool %>%
+  filter(Visite == "baseline 1")
+
+# Load the coin package
+library(coin)
+
+# Identify the metabolite columns:
+metabolite_columns <- colnames(combo_stool[ ,c(4:42)])
+
+# Initialize a vector to store the p-values for each metabolite
+p_values <- numeric(length(metabolite_columns))
+names(p_values) <- metabolite_columns
+
+# Loop through each metabolite
+for (met in metabolite_columns) {
+  test_formula <- as.formula(paste(met, "~ Oscillibacter.sp..57_20. | Visite"))
+  test_result <- independence_test(test_formula, data = combo_stool, 
+                                   distribution = approximate(nresample = 10000))
+  p_values[met] <- pvalue(test_result)
+}
+
+# Adjust the p-values for multiple testing
+adj_p_values <- p.adjust(p_values, method = "BH")
+
+# Combine the results in a data frame for clarity
+results_oscilli_stool <- data.frame(
+  Metabolite = metabolite_columns,
+  P_Value = p_values,
+  Adjusted_P_Value = adj_p_values
+)
+write_xlsx(results_oscilli_stool, path = "correlations.oscilli.stool.xlsx")
+
+combo_stool %>%
+  ggplot(aes(x = log(Oscillibacter.sp..57_20.), y = log(Methionine), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Oscilli sp. 57_20)",
+    y = "log (Methionine)"
+  ) +
+  stat_cor(aes(group = 1), size = 8, method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.oscilli.methionine
+fig.7.oscilli.methionine
+
+
+combo_stool %>%
+  ggplot(aes(x = log(Oscillibacter.sp..57_20.), y = log(Glycerol), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Oscilli sp. 57_20)",
+    y = "log (Glycerol)"
+  ) +
+  stat_cor(aes(group = 1), size = 8, method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.oscilli.Glycerol
+fig.7.oscilli.Glycerol
+
+combo_stool %>%
+  ggplot(aes(x = log(Oscillibacter.sp..57_20.), y = log(Arginine), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Oscilli sp. 57_20)",
+    y = "log (Arginine)"
+  ) +
+  stat_cor(aes(group = 1), size = 8,method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.oscilli.Arginine
+fig.7.oscilli.Arginine
+
+combo_stool %>%
+  ggplot(aes(x = Oscillibacter.sp..57_20., y = Uridine)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  stat_cor(size = 5)
+
+combo_stool %>%
+  ggplot(aes(x = log(Oscillibacter.sp..57_20.), y = log(Uridine), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Oscilli sp. 57_20)",
+    y = "log (Uridine)"
+  ) +
+  stat_cor(aes(group = 1), size = 8, method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.oscilli.Uridine
+fig.7.oscilli.Uridine
+```
+
+```{r}
+### check for faecalibacterium
+for (met in metabolite_columns) {
+  # Build the formula including the conditioning variable
+  test_formula <- as.formula(paste(met, "~ NA.Faecalibacterium.species.incertae.sedis | Visite"))
+  test_result <- independence_test(test_formula, data = combo_stool, 
+                                   distribution = approximate(nresample = 10000))
+  p_values[met] <- pvalue(test_result)
+}
+
+# Adjust the p-values for multiple testing 
+adj_p_values_faecali <- p.adjust(p_values, method = "BH")
+
+# Combine the results in a data frame for clarity
+results_faecali_stool <- data.frame(
+  Metabolite = metabolite_columns,
+  P_Value = p_values,
+  Adjusted_P_Value = adj_p_values
+)
+
+write_xlsx(results_faecali_stool, path = "correlations.faecali.stool.xlsx")
+
+### plot significant metabolites
+combo_stool %>%
+  ggplot(aes(x = log(NA.Faecalibacterium.species.incertae.sedis), y = log(Uridine))) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  stat_cor(size = 5)
+
+combo_stool %>%
+  ggplot(aes(x = log(NA.Faecalibacterium.species.incertae.sedis), y = log(Uridine), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Faecali sp. incertae sedis)",
+    y = "log (Uridine)"
+  ) +
+  stat_cor(aes(group = 1), size = 8,method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.faecali.Uridine
+fig.7.faecali.Uridine
+
+combo_stool %>%
+  ggplot(aes(x = NA.Faecalibacterium.species.incertae.sedis, y = Butyrate)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  stat_cor(size = 5)
+
+combo_stool %>%
+  ggplot(aes(x = log(NA.Faecalibacterium.species.incertae.sedis), y = log(Butyrate), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Faecali sp. incertae sedis)",
+    y = "log (Butyrate)"
+  ) +
+  stat_cor(aes(group = 1), size = 8,method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.faecali.Butyrate
+fig.7.faecali.Butyrate
+
+combo_stool %>%
+  ggplot(aes(x = NA.Faecalibacterium.species.incertae.sedis, y = Hypoxanthine)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  stat_cor(size = 5)
+
+combo_stool %>%
+  ggplot(aes(x = log(NA.Faecalibacterium.species.incertae.sedis), y = log(Hypoxanthine), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Faecali sp. incertae sedis)",
+    y = "log (Hypoxanthine)"
+  ) +
+  stat_cor(aes(group = 1), size = 8, method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.faecali.Hypoxanthine
+fig.7.faecali.Hypoxanthine
+
+
+combo_stool %>%
+  ggplot(aes(x = NA.Faecalibacterium.species.incertae.sedis, y = Acetate)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  stat_cor(size = 5)
+
+combo_stool %>%
+  ggplot(aes(x = log(NA.Faecalibacterium.species.incertae.sedis), y = log(Acetate), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Faecali sp. incertae sedis)",
+    y = "log (Acetate)"
+  ) +
+  stat_cor(aes(group = 1), size = 8, method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.faecali.Acetate
+fig.7.faecali.Acetate
+
+combo_stool %>%
+  ggplot(aes(x = NA.Faecalibacterium.species.incertae.sedis, y = Tryptophan)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "cornflowerblue") +
+  theme_classic() +
+  stat_cor(size = 5)
+
+combo_stool %>%
+  ggplot(aes(x = log(NA.Faecalibacterium.species.incertae.sedis), y = log(Tryptophan), color = Visite)) +
+  geom_jitter(size = 3, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+    scale_color_manual(values = c("baseline 1" = "#E69F00",
+    "fasting"    = "#CC79A7",
+    "follow-up"  = "#0072B2")) +
+  labs(
+    x = "log (Faecali sp. incertae sedis)",
+    y = "log (Tryptophan)"
+  ) +
+  stat_cor(aes(group = 1), size = 8, method = "spearman") +
+  theme(
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_blank(),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    axis.line = element_blank()) -> fig.7.faecali.Tryptophan
+fig.7.faecali.Tryptophan
+
+```
+
+```{r}
+#######################
+##### test baseline correlation with spearman
+########################
+p_values <- numeric(length(metabolite_columns))
+spearman_cor <- numeric(length(metabolite_columns))
+names(p_values) <- metabolite_columns
+names(spearman_cor) <- metabolite_columns
+
+for (met in metabolite_columns) {
+  x <- combo_stool_baseline[[met]]
+  y <- combo_stool_baseline$NA.Faecalibacterium.species.incertae.sedis
+  test_result <- cor.test(x, y, method = "spearman")
+  spearman_cor[met] <- test_result$estimate
+  p_values[met] <- test_result$p.value
+}
+
+
+adj_p_values_faecali <- p.adjust(p_values, method = "BH")
+
+# Combine the results in a data frame for clarity
+results_faecali_stool <- data.frame(
+  Metabolite = metabolite_columns,
+  Spearman_Correlation = spearman_cor,
+  P_Value = p_values,
+  Adjusted_P_Value = adj_p_values_faecali
+)
+
+
+###############
+### for oscilli
+################
+for (met in metabolite_columns) {
+  x <- combo_stool_baseline[[met]]
+  y <- combo_stool_baseline$Oscillibacter.sp..57_20.
+  test_result <- cor.test(x, y, method = "spearman")
+  spearman_cor[met] <- test_result$estimate
+  p_values[met] <- test_result$p.value
+}
+
+
+adj_p_values_oscilli <- p.adjust(p_values, method = "BH")
+
+
+results_oscilli_stool <- data.frame(
+  Metabolite = metabolite_columns,
+  Spearman_Correlation = spearman_cor,
+  P_Value = p_values,
+  Adjusted_P_Value = adj_p_values_oscilli
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## NMR_blood
+
+```{r}
+###########
+# For PCA:
+#############
+NMR_blood_clean <- NMR_blood_imputed
+
+proteomics_scaled <- scale(NMR_blood_clean, center = TRUE, scale = TRUE)
+proteomics_clean <- data.frame(proteomics_scaled) %>% 
+  select(where(~ !all(is.nan(.))))
+pca_res <- prcomp(proteomics_clean)
+
+# Calculate variance explained for each PC
+pca_var <- pca_res$sdev^2
+pca_var_perc <- round(100 * pca_var / sum(pca_var), 1)
+
+# Merge PCA scores with metadata:
+pca_scores <- as.data.frame(pca_res$x)
+pca_scores$Proben_ID_Novogene <- rownames(pca_scores)
+
+sample.data <- data.frame(sample_data(PS.tree))
+meta.clean <- sample.data[rownames(sample.data) %in% rownames(NMR_blood_imputed), ] %>%
+  select(Proben_ID_Novogene, Visite, Probanden_ID)
+
+pca_scores <- merge(meta.clean, pca_scores, by = "Proben_ID_Novogene")
+
+centroids <- pca_scores %>%
+  group_by(Visite) %>%
+  dplyr::summarize(
+    PC1 = mean(PC1, na.rm = TRUE),
+    PC2 = mean(PC2, na.rm = TRUE)
+  )
+
+################
+#####Build the plot
+####################
+ggplot(pca_scores, aes(x = PC1, y = PC2)) +
+  stat_ellipse(aes(color = Visite, fill = Visite),
+               geom = "polygon",
+               alpha = 0.1,
+               level = 0.95,
+               linetype = 1) +
+  geom_point(aes(color = Visite),
+             size = 3,
+             alpha = 0.7) +
+  geom_point(data = centroids,
+             aes(fill = Visite),
+             shape = 21,
+             color = "black",
+             stroke = 1.0,
+             size = 6) +
+  scale_color_manual("Visite",
+                     values = c("baseline 1" = "#E69F00", 
+                                "fasting" = "#CC79A7", 
+                                "follow-up" = "#0072B2")) +
+  scale_fill_manual("Visite",
+                    values = c("baseline 1" = "#E69F00", 
+                               "fasting" = "#CC79A7", 
+                               "follow-up" = "#0072B2")) +
+  labs(
+    x = paste0("PC1 (", pca_var_perc[1], "% variance)"),
+    y = paste0("PC2 (", pca_var_perc[2], "% variance)")
+  ) +
+  theme_classic() +
+  ylim(-5, 5) +
+  xlim(-7.5, 7.5) +
+  theme(
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24, color = "black"),
+    legend.text = element_text(size = 24, color = "black"),
+    legend.title = element_text(size = 24, color = "black"),
+    axis.title.x = element_text(size = 24, color = "black"),
+    axis.line = element_line(size = 1),
+    legend.position = "top"
+  ) -> fig.S2blood.nmr.pc.plot
+
+fig.S2blood.nmr.pc.plot
+
+#####################
+###### statistics
+##################
+pca_scores <- as.data.frame(pca_res$x)
+pca_scores <- pca_scores %>% rownames_to_column(var = "SampleID")
+sample.data <- sample.data %>% rownames_to_column(var = "SampleID")
+
+# Merge PC scores with metadata
+merged_data <- merge(pca_scores, sample.data, by = "SampleID")
+
+
+manova_res <- manova(cbind(PC1, PC2) ~ Visite, data = merged_data)
+summary(manova_res, test = "Pillai")
+
+### only test between baseline and fasting
+merged_fasting <- merged_data %>%
+  filter(Visite != "follow-up")
+
+manova_res <- manova(cbind(PC1, PC2) ~ Visite, data = merged_fasting)
+summary(manova_res, test = "Pillai")
+
+
+```
+### Centered blood metabolites
+```{r}
+###############
+##### blood
+##############
+NMR_blood_clean <- NMR_blood_imputed %>%
+  rownames_to_column(var = "Proben_ID_Novogene")
+sample.data <- data.frame(sample_data(PS.tree))
+meta.clean <- sample.data[rownames(sample.data) %in% rownames(NMR_blood_imputed), ] %>%
+  select(Proben_ID_Novogene, Visite, Probanden_ID)
+
+df.abs.blood <- merge(meta.clean, NMR_blood_clean, by = "Proben_ID_Novogene")
+
+saveRDS(df.abs.blood, file ="scfa/NMR.comb.blood.rds")
+
+####################################### PCA ##########################
+pca_fit <- df.abs.blood  %>% 
+  dplyr::select(-c(1:3)) %>%  
+  dplyr::select_if(~sd(.) != 0) %>%
+  scale() %>% # scale data
+  prcomp() # do PCA
+
+eigenvalues <- pca_fit %>% tidy(matrix = "eigenvalues")
+
+pca_fit %>%
+  augment(df.abs.blood) %>% #
+  ggplot(aes(.fittedPC1, .fittedPC2, color = Visite)) +
+  geom_path(aes(group = Probanden_ID), size = 1, color = "black") + # Connect dots for each Patient
+  geom_point(size = 5) +
+  xlab(paste("PC2 - ", eigenvalues$percent[1] * 100, "%", sep = "")) +
+  ylab(paste("PC3 - ", eigenvalues$percent[2] * 100, "%", sep = "")) +
+  theme_bw()
+
+
+# Compute relative coordinates
+df_centered <- pca_fit %>%
+  augment(df.abs.blood) %>% 
+  group_by(Probanden_ID) %>%
+  mutate(
+    BL_PC1 = .fittedPC1[Visite == "baseline 1"],
+    BL_PC2 = .fittedPC2[Visite == "baseline 1"],
+    Fast_PC1 = .fittedPC1[Visite == "fasting"],
+    Fast_PC2 = .fittedPC2[Visite == "fasting"],
+    rel_BL_PC1 = .fittedPC1 - BL_PC1,
+    rel_BL_PC2 = .fittedPC2 - BL_PC2,
+    rel_Fast_PC1 = .fittedPC1 - Fast_PC1,
+    rel_Fast_PC2 = .fittedPC2 - Fast_PC2
+  ) %>%
+  ungroup()
+
+
+# First layer: arrows from baseline to fasting
+df_arrows_bl_to_fast <- df_centered %>%
+  filter(Visite %in% c("baseline 1", "fasting")) %>%
+  select(Probanden_ID, Visite, rel_BL_PC1, rel_BL_PC2)
+
+
+df_arrows_bl_to_fast <- df_arrows_bl_to_fast %>%
+  pivot_wider(names_from = Visite, values_from = c(rel_BL_PC1, rel_BL_PC2)) %>%
+  rename(
+    x_start = "rel_BL_PC1_baseline 1",
+    y_start = "rel_BL_PC2_baseline 1",
+    x_end = rel_BL_PC1_fasting,
+    y_end = rel_BL_PC2_fasting
+  )
+
+# Second layer: arrows from fasting to follow-up
+df_arrows_fast_to_fu <- df_centered %>%
+  filter(Visite %in% c("fasting", "follow-up")) %>%
+  select(Probanden_ID, Visite, rel_Fast_PC1, rel_Fast_PC2)
+
+df_arrows_fast_to_fu <- df_arrows_fast_to_fu %>%
+  pivot_wider(names_from = Visite, values_from = c(rel_Fast_PC1, rel_Fast_PC2)) %>%
+  rename(
+    x_start = rel_Fast_PC1_fasting,
+    y_start = rel_Fast_PC2_fasting,
+    x_end = "rel_Fast_PC1_follow-up",
+    y_end = "rel_Fast_PC2_follow-up"
+  )
+
+
+```
+```{r}
+
+df_bl_fast <- df_arrows_bl_to_fast %>% mutate(traj = "baseline to fasting")
+df_fast_fu <- df_arrows_fast_to_fu %>% mutate(traj = "fasting to follow-up")
+df_arrows_all <- bind_rows(df_bl_fast, df_fast_fu)
+
+
+arrowCentroids <- df_arrows_all %>%
+  group_by(traj) %>%
+  summarise(
+    V1 = mean(x_end),
+    V2 = mean(y_end),
+    V3 = mean(x_start),
+    V4 = mean(y_start),
+    .groups = "drop"
+  )
+
+# Define custom colors for the trajectory types
+traj_colors <- c("baseline to fasting" = "#CC79A7", "fasting to follow-up" = "#0072B2")
+
+# Build the styled plot
+fig.S2star.plot.blood <- ggplot() +
+  geom_segment(data = df_arrows_all,
+               aes(x = x_start, y = y_start, xend = x_end, yend = y_end, color = traj),
+               arrow = arrow(length = unit(0.3, "cm")),
+               alpha = 0.5) +
+  geom_point(data = df_arrows_all, aes(x = x_start, y = y_start),
+             size = 4, alpha = 0.8, color = "#E69F00") +
+  geom_point(data = df_arrows_all, aes(x = x_end, y = y_end),
+             size = 3, alpha = 0.3, color = "#0072B2") + 
+  geom_point(data = arrowCentroids, aes(x = V3, y = V4), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "black", size = 6) +
+  geom_point(data = arrowCentroids, aes(x = V1, y = V2), color = "#CC79A7", size = 5) +
+  geom_segment(data = arrowCentroids,
+               aes(x = V3, y = V4, xend = V1, yend = V2),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black", size = 1) +
+  xlab("PC1") +
+  ylab("PC2") +
+  guides(color = guide_legend(title = "trajectory")) +
+  scale_color_manual(values = traj_colors) +
+  theme_classic() +
+  ylim(-5, 5) +
+  xlim(-7.5, 7.5) +
+  theme(
+    legend.position = "top",
+    axis.title = element_text(size = 24, color = "black"),
+    axis.text = element_text(size = 24, color = "black"),
+    axis.line = element_line(size = 1),
+    legend.title = element_text(size = 24, color = "black"),
+    legend.text = element_text(size = 24, color = "black")
+  )
+
+fig.S2star.plot.blood
+```
+
+
+
+
+
+### Univariate Blood NMR
+```{r}
+NMR_comb <- NMR_blood_imputed %>%
+  rownames_to_column(var = "Proben_ID_Novogene")
+
+sample.data <- data.frame(sample_data(PS.tree))
+meta.clean <- sample.data[rownames(sample.data) %in% rownames(NMR_blood_imputed), ] %>%
+  select(Proben_ID_Novogene, Visite, Probanden_ID)
+
+NMR.comb <- merge(meta.clean, NMR_comb, by = "Proben_ID_Novogene")
+
+NMR.blood.long <- pivot_longer(NMR.comb, cols = c(4:ncol(NMR.comb)), names_to = "Protein", values_to = "Abundance")
+
+df_complete <- NMR.blood.long %>%
+  group_by(Protein, Probanden_ID) %>%
+  filter(n_distinct(Visite) == 3) %>%  # Keep only subjects with all 3 visits
+  ungroup()
+
+# Now perform the paired pairwise Wilcoxon tests across all visits
+result_blood <- df_complete %>% 
+  group_by(Protein) %>%
+  pairwise_wilcox_test(
+    formula = Abundance ~ Visite, 
+    paired = TRUE,
+    id = "Probanden_ID",
+    p.adjust.method = "BH"
+  )
+
+### extract signifcant results
+signif_results <- result_blood %>%
+  filter(p.adj < 0.1)
+
+print(signif_results)
+
+
+######################
+###### Plot #########
+#####################
+
+sig_Protein <- unique(signif_results$Protein)
+
+filtered_result <- result_blood %>%
+  filter(Protein %in% sig_Protein)
+
+
+# Compute Cliff's delta for each Protein and each comparison
+all_comps_for_sig_Protein <- filtered_result %>%
+  rowwise() %>%
+  mutate(
+    cliff_delta = effsize::cliff.delta(
+      NMR.blood.long$Abundance[NMR.blood.long$Protein == Protein & NMR.blood.long$Visite == group2],
+      NMR.blood.long$Abundance[NMR.blood.long$Protein == Protein & NMR.blood.long$Visite == group1]
+    )$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(
+    is_significant = p.adj < 0.1,
+    Direction = case_when(
+      cliff_delta > 0 ~ "Increased",
+      cliff_delta < 0 ~ "Decreased",
+      TRUE            ~ "No change"
+    ),
+    effect_size = cliff_delta,
+    point_alpha = if_else(is_significant, 1, 0.4),
+    outline_color = if_else(is_significant, "black", "grey"),
+    Comparison = paste(group1, group2, sep = " vs ")
+  )
+
+# Clean up Protein names
+sig_plot_data <- all_comps_for_sig_Protein %>%
+  mutate(Protein = Protein %>%
+           as.character() %>%
+           gsub(" \\(Conc\\.\\) \\[mmol/L\\]", "", .) %>%  # correctly escape special characters
+           trimws() %>%
+           na_if("")
+         )
+
+sig_plot_data$Protein <- gsub(sig_plot_data$Protein, pattern = "X2 Hydroxybutyric acid", replacement = "2-Hydroxybutyric acid")
+sig_plot_data$Protein <- gsub(sig_plot_data$Protein, pattern = "D Galactose", replacement = "D-Galactose")
+
+
+sig_plot_data$Comparison <- factor(sig_plot_data$Comparison,
+  levels = c("baseline 1 vs fasting", "fasting vs follow-up", "baseline 1 vs follow-up"))
+
+# Save as table for supplement
+library(writexl)
+#write_xlsx(sig_plot_data, "sig_plot_data_Protein_blood.xlsx")
+
+# Extract ordering for Species based on the effect size from "baseline 1 vs fasting"
+order_protein <- sig_plot_data %>%
+  filter(Comparison == "baseline 1 vs fasting") %>%
+  arrange(effect_size) %>%
+  pull(Protein)
+
+# Update the Species factor levels based on the ordering from the baseline 1 vs fasting comparison
+sig_plot_data <- sig_plot_data %>%
+  mutate(Protein = factor(Protein, levels = order_protein))
+
+
+# Plot the results using ggplot2
+ggplot(sig_plot_data, aes(
+  x = Comparison,
+  y = Protein  
+)) +
+  geom_point(
+    aes(
+      fill = Direction,         
+      size = abs(effect_size),  
+      alpha = point_alpha,      
+      color = outline_color     
+    ),
+    shape = 21,   
+    stroke = 0.8
+  ) +
+  scale_fill_manual(values = c("Increased" = "#0075DC", 
+                               "Decreased" = "#E64B35FF",
+                               "No change"  = "grey70")) +
+  scale_color_identity() +
+  scale_alpha_identity() +
+  scale_size_continuous(range = c(2, 6)) +
+  labs(
+    x = "Comparison",
+    y = "Metabolite",
+    fill = "Direction",
+    size = "|\u0394 Cliff's delta|"
+  ) +
+  theme_classic(base_size = 24) +
+  theme(
+    axis.text.y = element_text(color = "black"),
+    axis.text.x = element_text(color = "black", angle = 45, hjust = 1),
+    axis.title  = element_text(face = "bold"),
+    axis.title.x = element_blank(),
+    legend.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) -> fig.S2sig.Protein.blood.plot
+fig.S2sig.Protein.blood.plot
+#ggsave("fig.S2sig.Protein.blood.plot.pdf", plot = fig.S2sig.Protein.blood.plot, width = 8, height = 8)
+
+```
+
+### Test correlation with bacteria against blood metabolites
+```{r}
+view(NMR.comb)
+
+bacteria.data <- readRDS("rowdata/names.rds")
+
+bacteria.data <- data.frame(t(bacteria.data))
+oscilli <- bacteria.data %>%
+  select(Oscillibacter.sp..57_20., NA.Faecalibacterium.species.incertae.sedis) %>%
+  rownames_to_column(var = "Proben_ID_Novogene")
+
+combo <- NMR.comb %>%
+  left_join(oscilli, by = "Proben_ID_Novogene")
+
+combo.blood.baseline <-  combo %>%
+  filter(Visite == "baseline 1")
+
+# Load the coin package
+library(coin)
+combo_new <- combo
+# Identify the metabolite columns
+metabolite_columns <- colnames(combo_new[, 4:42])
+
+# Initialize a vector to store p-values
+p_values <- numeric(length(metabolite_columns))
+names(p_values) <- metabolite_columns
+
+# Optional: store names of failed metabolites
+failed_metabolites <- c()
+
+# Loop through each metabolite
+for (met in metabolite_columns) {
+  tryCatch({
+    met_escaped <- paste0("`", met, "`")
+    test_formula <- as.formula(paste(met_escaped, "~ Oscillibacter.sp..57_20. | Visite"))
+    
+    test_result <- independence_test(
+      test_formula, 
+      data = combo_new, 
+      distribution = approximate(nresample = 10000)
+    )
+    
+    p_values[met] <- pvalue(test_result)
+  }, error = function(e) {
+    failed_metabolites <<- c(failed_metabolites, met)
+    p_values[met] <<- NA
+    message(paste("Skipped:", met, "->", e$message))
+  })
+}
+
+
+# Adjust the p-values for multiple testing (using the FDR method, for example)
+adj_p_values <- p.adjust(p_values, method = "fdr")
+
+# Combine the results in a data frame for clarity
+results <- data.frame(
+  Metabolite = metabolite_columns,
+  P_Value = p_values,
+  Adjusted_P_Value = adj_p_values
+)
+
+# Print the results
+print(results)
+#write_xlsx(results, path = "correlations.oscilli.blood.xlsx")
+
+#######################
+##### test baseline correlation with spearman
+########################
+p_values <- numeric(length(metabolite_columns))
+spearman_cor <- numeric(length(metabolite_columns))
+names(p_values) <- metabolite_columns
+names(spearman_cor) <- metabolite_columns
+
+# Loop over each metabolite
+for (met in metabolite_columns) {
+  x <- combo.blood.baseline[[met]]
+  y <- combo.blood.baseline$NA.Faecalibacterium.species.incertae.sedis
+  test_result <- cor.test(x, y, method = "spearman")
+  spearman_cor[met] <- test_result$estimate
+  p_values[met] <- test_result$p.value
+}
+
+
+adj_p_values_faecali <- p.adjust(p_values, method = "BH")
+
+# Combine the results in a data frame for clarity
+results_faecali_blood <- data.frame(
+  Metabolite = metabolite_columns,
+  Spearman_Correlation = spearman_cor,
+  P_Value = p_values,
+  Adjusted_P_Value = adj_p_values_faecali
+)
+
+
+###############
+### for oscilli
+################
+for (met in metabolite_columns) {
+  x <- combo.blood.baseline[[met]]
+  y <- combo.blood.baseline$Oscillibacter.sp..57_20.
+  test_result <- cor.test(x, y, method = "spearman")
+  spearman_cor[met] <- test_result$estimate
+  p_values[met] <- test_result$p.value
+}
+
+# Adjust the p-values 
+adj_p_values_oscilli <- p.adjust(p_values, method = "BH")
+
+# Combine the results in a data frame for clarity
+results_oscilli_blood <- data.frame(
+  Metabolite = metabolite_columns,
+  Spearman_Correlation = spearman_cor,
+  P_Value = p_values,
+  Adjusted_P_Value = adj_p_values_oscilli
+)
+
+```
+

@@ -1,0 +1,2303 @@
+---
+title: "Fig.3 - Model"
+author: "Gelsomina Nicola Kaufhold"
+date: "2025-06-18"
+output: html_document
+---
+
+# Figure 3: Random Forest Model
+## Subset of patient with long-term response in bodyweight 
+
+# Load required packages
+```{r}
+library(phyloseq)
+library(tidyverse)
+library(readxl)
+library(rstatix)
+library(dplyr)
+library(microbiome)
+```
+
+# Load data
+```{r}
+PS.tree <- readRDS("rowdata/PS.tree.rds")
+PS.all.visits <- readRDS("rowdata/PS_all_Visits.rds")
+
+boxplot.theme.legend <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black",angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "top")
+
+boxplot.theme <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black", angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.title.x = element_blank(),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+
+boxplot.theme.2 <- theme_classic() +
+    theme(
+        axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        axis.title = element_text(size = 24, color = "black"),
+        legend.text = element_text(size = 24, color = "black"),
+        legend.title = element_text(size = 24, color = "black"),
+        axis.line = element_line(size = 1),
+        axis.ticks = element_line(color = "black"),
+        legend.position = "none")
+```
+
+
+## Prepare machine learning data
+### Prepare functional data of scfa production
+```{r}
+kegg_modules <- read_csv("rowdata/functions//kegg_module_annotation.csv")
+kegg_modules <- kegg_modules[ ,c(0:127)]
+
+kegg_modules <- kegg_modules %>%
+  rename("modules" = 1) %>%
+  column_to_rownames(var = "modules")
+
+col_names_new <- gsub(pattern = "preprocessed\\.|filtered_qc\\.pair", replacement = "", colnames(kegg_modules))
+col_names_new <- gsub(pattern = "_", replacement = ".", col_names_new)
+colnames(kegg_modules) <- col_names_new
+
+kegg_modules <- kegg_modules %>%
+  select(long, everything()) %>%
+  mutate(across(starts_with("V"), as.numeric))
+
+summarized_kegg <- kegg_modules %>%
+  group_by(long) %>%
+  summarize(across(starts_with("V"), ~sum(.)))
+
+summarized_kegg$long[is.na(summarized_kegg$long)] <- "undefined"
+
+sum_kegg <- summarized_kegg %>%
+  column_to_rownames(var = "long")
+
+######################
+######## select functions related to scfa production
+################
+modules_propionate <- summarized_kegg %>%
+  filter(str_detect(long, "propionate"))
+
+
+modules_butyrate <- summarized_kegg %>%
+  filter(str_detect(long, "butyrate"))
+
+modules_acetate <- summarized_kegg %>%
+  filter(str_detect(long, "acetate")) %>%
+  filter(long != "lysine fermentation to acetate and butyrate (3")
+
+modules_tryptophan <- summarized_kegg %>%
+  filter(str_detect(long, "Tryptophan"))
+
+modules_tryptophan_1 <- summarized_kegg %>%
+  filter(str_detect(long, "tryptophan"))
+
+modules_int <- rbind(modules_propionate, modules_butyrate, modules_acetate, modules_tryptophan, modules_tryptophan_1)
+modules_int <- modules_int %>%
+  column_to_rownames(var = "long")
+```
+
+### Prepare metadata
+```{r}
+meta_data <- data.frame(sample_data(PS.tree))
+meta_int <- meta_data %>%
+  select(Probanden_ID, BMI, Sex, Visite, sys_mean, bp_dia_mean, hdl, ldl)
+
+modules_int <- modules_int %>%
+  select(starts_with(c("V2", "V3", "V4")))
+
+modules_int <- t(modules_int)
+
+modules_int <- modules_int[row.names(modules_int) %in% row.names(meta_int), ]
+
+class_data <- cbind(meta_int, modules_int)
+```
+
+### Prepare species of interest
+```{r}
+names <- readRDS("rowdata/names.rds")
+colnames(names) <- gsub('_', '.', colnames(names))
+names <-names[, colnames(names) %in% row.names(meta_data) ]
+
+
+
+species_int <- c("NA.Faecalibacterium.sp..CAG.74.", "NA.Clostridium.species.incertae.sedis", "Faecalibacterium.prausnitzii.1.", "NA.Roseburia.species.incertae.sedis", "NA.Faecalibacterium.species.incertae.sedis", "Oscillibacter.sp..57_20.", "Faecalibacterium.prausnitzii", "Akkermansia.muciniphila..CAG.154.UNK.MGS.1.54_46.Phil8.", "NA.Prevotella.species.incertae.sedis", "NA.Prevotellaceae.species.incertae.sedis")
+
+bact_int <- data.frame(t(names))
+bact_int <- bact_int %>%
+  select(species_int)
+
+## what are the 50 most abundant species?
+bact <- data.frame(t(names))
+features <- bact
+index.keep.1 <- features[, colSums(features)!=0] 
+index.keep_t = t(index.keep.1)
+index.keep.50 <- index.keep_t[names(sort(rowSums(index.keep_t), decreasing = TRUE)[1:50]), ]
+index.keep.50 <- as.data.frame(t(index.keep.50))
+top50 <- colnames(index.keep.50)
+bacteria_top50 <- bact %>%
+  select(species_int, top50)
+
+#### Bind to meta data
+class_data <- cbind(meta_int, modules_int, bact_int, bacteria_top50)
+```
+
+### Create machine learning data
+```{r}
+tab <- microbiome::alpha(PS.tree, index = "all") 
+alpha <- tab %>%
+  select(diversity_shannon)
+
+class_data_all <- cbind(meta_int, modules_int, bact_int, alpha)
+```
+
+## Cluster patients into responder and non responder according to bmi loss
+```{r}
+###########################
+####### what is the normal bmi fluctuation?
+##########################
+
+meta.all <- data.frame(meta(PS.all.visits))
+
+# include BMI into data
+library(readxl)
+hight <- read_excel("rowdata/weight.xlsx", 
+    col_names = FALSE)
+
+hight <- hight[ , c(7, 11)]
+colnames(hight) <- c("proband_id", "Hight")
+
+meta.all <- meta.all %>%
+  left_join(hight, by = "proband_id") 
+
+meta.all.bmi <- meta.all %>%
+  dplyr::mutate(Hight = Hight / 100) %>%
+  mutate(BMI = koerpergewicht / (Hight^2))
+
+rownames(meta.all.bmi) <- meta.all.bmi$Novogene_ID
+
+meta.all.bmi$BMI <- as.numeric(meta.all.bmi$BMI)
+
+##################################
+##### Fluctuation between V1 and V2
+################################
+
+V1.bmi <- meta.all.bmi %>%
+  filter(Visite == "V1") %>%
+  select(proband_id, BMI)
+
+mean(V1.bmi$BMI)
+sd(V1.bmi$BMI)
+
+V2.bmi <- meta.all.bmi %>%
+  filter(Visite == "V2") %>%
+  select(proband_id, BMI)
+
+bmi <- V1.bmi %>%
+  full_join(V2.bmi, by = "proband_id")
+
+bmi$dif <- (bmi$BMI.x - bmi$BMI.y)
+
+bmi.mean <- bmi %>%
+  drop_na(dif)
+
+bmi.mean.red <- bmi.mean %>%
+  filter(proband_id != "LEANER-19")
+
+mean(bmi.mean.red$dif)
+sd(bmi.mean.red$dif)
+
+
+untere.mean <-  mean(bmi.mean$dif) -(2*sd(bmi.mean.red$dif))
+obere.mean <- mean(bmi.mean.red$dif)+(2*sd(bmi.mean.red$dif))
+# everyone with a BMI change above 0.56 is considered as a responder
+
+##############################################
+###### clustering patients according to their bmi loss
+#####################################
+samp.meta <- data.frame(sample_data(PS.tree))
+samp.bmi <- samp.meta %>%
+  select(Probanden_ID, Visite, BMI)
+
+bmi.baseline <- samp.bmi %>%
+  filter(Visite == "baseline 1") %>%
+  select(Probanden_ID, BMI) %>%
+  rename(bmi.baseline = BMI)
+
+bmi.recovery <- samp.bmi %>%
+  filter(Visite == "follow-up") %>%
+  select(Probanden_ID, BMI) %>%
+  rename(bmi.recovery = BMI)
+
+bmi.total <- bmi.baseline %>%
+  full_join(bmi.recovery, by = "Probanden_ID") %>%
+  filter(!is.na(bmi.recovery))
+
+bmi.total$dif <- bmi.total$bmi.baseline - bmi.total$bmi.recovery
+
+bmi.total$responder_mean <- ifelse(test = bmi.total$dif > obere.mean, yes = 1, no = 0)
+
+bmi.cluster.mean <- bmi.total %>%
+  select(Probanden_ID, responder_mean)
+
+class_data_all <- data.frame(class_data_all)
+class_data_baseline <- class_data_all %>%
+  filter(Visite == "baseline 1")
+
+## ad the cluster
+class.data.cluster <- class_data_baseline %>%
+  left_join(bmi.cluster.mean, by = "Probanden_ID")
+
+# exclude LEANER-15 and -24 because of missing data
+class.data.cluster <- class.data.cluster %>%
+  filter(Probanden_ID != "LEANER-15") %>%
+  filter(Probanden_ID != "LEANER-25")
+```
+
+## Apply random forest to leaner data
+```{r}
+library(tidyverse)
+library(caret)
+library(randomForest)
+df <- class.data.cluster
+df$Probanden_ID <- NULL
+df$Sex <- NULL
+df$Visite <- NULL
+df$BMI <- NULL
+df$responder_mean <- as.factor(df$responder_mean) 
+
+### save list for supplement table
+library(writexl)
+features <- colnames(df)
+features_df <- data.frame(Feature = features)
+#write_xlsx(features_df, "features_list.xlsx")
+
+# Split the data into training and test set
+set.seed(123)
+training.samples <- df$responder_mean %>% 
+  createDataPartition(p = 0.8, list = FALSE)
+# In this case, 80% of the data will be used for training, and the remaining 20% will be used for the test set. 
+train.data  <- df[training.samples, ]
+test.data <- df[-training.samples, ]
+
+
+# Define the control function for training with LOOCV and set random seeds for reproducebility
+control <- trainControl(method = "LOOCV")
+
+# Train the Random Forest model using LOOCV
+model <- train(responder_mean ~ ., data = train.data,
+               method = "rf", 
+               trControl = control, 
+               importance = TRUE)
+
+# Print the model
+print(model)
+
+# Evaluate model performance
+predicted_test <- predict(model, newdata = test.data[, -ncol(test.data)])
+
+# Evaluate the model
+confusionMatrix(predicted_test, as.factor(test.data$responder_mean)) -> confmat
+confmat
+
+# Feature importance plot
+feature_importance <- importance(model$finalModel)
+print(feature_importance)
+
+###############
+### plot feature importance
+######################
+feature_importance <- importance(model$finalModel)
+
+# Create a data frame for easier visualization
+feature_importance_df <- data.frame(
+  feature = rownames(feature_importance),
+  importance = feature_importance[, 4]  # Choose the correct importance metric
+)
+
+# Sort by importance
+feature_importance_df <- feature_importance_df %>%
+  arrange(desc(importance))
+
+# Plot the feature importance
+
+ggplot(feature_importance_df, aes(x = reorder(feature, importance), y = importance)) +
+  geom_col(fill = "steelblue") + 
+  coord_flip() +  
+  labs(title = "Feature importance in predicting cluster",
+       x = "Feature",
+       y = "Importance") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 24, color = "black")
+  ) -> fig.3.feature.importance.model.long
+fig.3.feature.importance.model.long
+
+#ggsave("fig.3.feature.importance.model.long.pdf", plot = fig.3.feature.importance.model.long, width = 20, height = 20)
+
+```
+
+### Including BMI at baseline in the model
+```{r}
+df <- class.data.cluster
+df$Probanden_ID <- NULL
+df$Sex <- NULL
+df$Visite <- NULL
+#df$BMI <- NULL
+df$responder_mean <- as.factor(df$responder_mean) 
+# Split the data into training and test set
+set.seed(123)
+training.samples <- df$responder_mean %>% 
+  createDataPartition(p = 0.8, list = FALSE)
+# In this case, 80% of the data will be used for training, and the remaining 20% will be used for the test set. 
+train.data  <- df[training.samples, ]
+test.data <- df[-training.samples, ]
+
+
+# Define the control function for training with LOOCV and set random seeds for reproducebility
+control <- trainControl(method = "LOOCV")
+
+# Train the Random Forest model using LOOCV
+model_BMI <- train(responder_mean ~ ., data = train.data,
+               method = "rf", 
+               trControl = control, 
+               importance = TRUE)
+
+# Print the model
+print(model_BMI)
+
+# Evaluate model performance
+predicted_test <- predict(model_BMI, newdata = test.data[, -ncol(test.data)])
+
+# Evaluate the model
+confusionMatrix(predicted_test, as.factor(test.data$responder_mean)) -> confmat_BMI
+confmat_BMI
+
+# Feature importance plot
+feature_importance <- importance(model_BMI$finalModel)
+print(feature_importance)
+
+###############
+### plot feature importance
+######################
+feature_importance <- importance(model_BMI$finalModel)
+
+# Create a data frame for easier visualization
+feature_importance_df <- data.frame(
+  feature = rownames(feature_importance),
+  importance = feature_importance[, 4]  # Choose the correct importance metric
+)
+
+# Sort by importance
+feature_importance_df <- feature_importance_df %>%
+  arrange(desc(importance))
+
+# Plot the feature importance
+
+ggplot(feature_importance_df, aes(x = reorder(feature, importance), y = importance)) +
+  geom_col(fill = "steelblue") +  # geom_col() is more direct for plotting pre-summarized values
+  coord_flip() +  # Horizontal bar plot for better label readability
+  labs(title = "Feature importance in predicting cluster",
+       x = "Feature",
+       y = "Importance") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 24, color = "black")
+  ) -> fig.3.feature.importance.model.long.bmi
+fig.3.feature.importance.model.long.bmi
+
+ggsave("fig.3.feature.importance.model.long.bmi.pdf", plot = fig.3.feature.importance.model.long.bmi, width = 20, height = 20)
+```
+
+
+
+### Set up short model
+```{r}
+# # Define the control function for training with LOOCV and set random seeds for reproducebility
+seeds.used <- readRDS("rowdata/classifier/seeds.rds")
+control <- trainControl(method = "LOOCV",
+                        seeds = seeds.used)
+
+model.short <- train(responder_mean ~ Oscillibacter.sp..57_20. + 
+                       NA.Faecalibacterium.species.incertae.sedis + 
+                       ldl + 
+                       sys_mean, 
+                     data = train.data,
+               method = "rf", 
+               trControl = control, 
+               importance = TRUE)
+
+# Predict on test data, excluding the last column with the disease status
+predicted_test <- predict(model.short, newdata = test.data[, -ncol(test.data)])
+
+# Evaluate the model
+confusionMatrix(predicted_test, as.factor(test.data$responder_mean)) -> confmat.short
+confmat.short
+
+########
+## plot confusion matrix
+#############
+# 1) Define the confusion matrix
+conf_mat <- matrix(
+  c(4, 1,
+    0, 1),
+  nrow = 2, byrow = TRUE,
+  dimnames = list(
+    c("Predicted Non-Responder", "Predicted Responder"),  # rows
+    c("Actual Non-Responder",    "Actual Responder")      # columns
+  )
+)
+
+# 2) Convert to a data frame for ggplot
+conf_mat_df <- as.data.frame.table(conf_mat)
+colnames(conf_mat_df) <- c("Prediction", "Reference", "Freq")
+
+# 3) Mark each cell as Correct vs. Incorrect (diagonal vs. off-diagonal)
+conf_mat_df$Color <- ifelse(
+  (conf_mat_df$Prediction == "Predicted Non-Responder" & 
+   conf_mat_df$Reference  == "Actual Non-Responder") |
+  (conf_mat_df$Prediction == "Predicted Responder" & 
+   conf_mat_df$Reference  == "Actual Responder"),
+  "Correct",
+  ifelse(conf_mat_df$Freq == 0, "No Data", "Incorrect")
+)
+
+# 4) Plot heatmap with ggplot
+ggplot(conf_mat_df, aes(x = Reference, y = Prediction, fill = Color)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = Freq), color = "black", size = 8) +
+  scale_fill_manual(
+    "Classification",
+    values = c("Correct"   = "#5ab4ac",  # teal
+               "Incorrect" = "#e9a3c9",  # pink
+               "No Data"   = "white")    # zero-frequency cells
+  ) +
+  coord_fixed() +
+  labs(x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(
+    panel.border    = element_rect(color = "black", fill = NA, size = 1),
+    legend.position = "top",
+    legend.title    = element_text(size = 24),
+    legend.text     = element_text(size = 24),
+    axis.text       = element_text(size = 24, color = "black"),
+    axis.title      = element_text(size = 24, face = "bold"),
+    plot.title      = element_text(size = 24, face = "bold", hjust = 0.5)
+  ) -> fig.3.confusion.matrix.leaner
+
+#ggsave("fig.3.confusion.matrix.leaner.pdf", plot = fig.3.confusion.matrix.leaner, width = 12, height = 10)
+
+
+#######################
+##### feature importance
+########################
+
+
+ #Access the underlying random forest model
+rf_model <- model.short$finalModel
+
+# Extract the Gini importance (Mean Decrease Gini)
+gini_importance <- importance(rf_model, type = 2)  # Type 2 is Mean Decrease Gini
+
+# Convert to data frame for ggplot
+gini_importance_df <- data.frame(
+  Feature = rownames(gini_importance),
+  Importance = gini_importance[, "MeanDecreaseGini"]
+)
+
+# Plot Gini importance
+gini <- gini_importance_df
+gini$Feature  <- gsub(pattern = "\\.", replace = " ", x = gini$Feature )
+gini$Feature  <- gsub(pattern = "^NA", replace = "", x = gini$Feature )
+gini$Feature <- gsub(pattern = "species", replace = "sp", x = gini$Feature )
+gini$Feature <- gsub(pattern = "sys_mean", replace = "sys BP", x = gini$Feature )
+gini$Feature <- gsub(pattern = "sp", replace = "sp.", x = gini$Feature )
+
+ggplot(gini, aes(x = reorder(Feature, Importance), y = Importance, fill = Feature)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +  # Flip coordinates for better readability
+  theme_minimal() +
+  labs(
+    x = "Features",
+    y = "Feature importance gini index"
+  ) +
+  ylim(c(0, max(gini$Importance) + 1)) +  # Set y-limits to be a bit higher than max value
+  theme(
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Add border around the plot
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    legend.position = "none"  # Remove legend
+  ) +
+  scale_fill_manual(values = c("#fc8d59", "#0072B2", "#FFA8BB", "#00998F"))  -> fig.3.feature.importance.model.short
+fig.3.feature.importance.model.short
+```
+
+### short model with BMI
+```{r}
+seeds.used <- readRDS("rowdata/classifier/seeds.rds")
+control <- trainControl(method = "LOOCV",
+                        seeds = seeds.used)
+
+model.short.bmi <- train(responder_mean ~ BMI + 
+                           Oscillibacter.sp..57_20. + 
+                       NA.Faecalibacterium.species.incertae.sedis + 
+                       ldl + 
+                       sys_mean, 
+                     data = train.data,
+               method = "rf", 
+               trControl = control, 
+               importance = TRUE)
+
+predicted_test <- predict(model.short.bmi, newdata = test.data[, -ncol(test.data)])
+
+# Evaluate the model
+confusionMatrix(predicted_test, as.factor(test.data$responder_mean)) -> confmat.short.bmi
+confmat.short.bmi
+#ggsave("confmat.short.bmi.pdf", plot = confmat.short.bmi, width = 12, height = 10)
+
+########
+## plot confusion matrix
+#############
+# 1) Define the confusion matrix
+conf_mat <- matrix(
+  c(4, 1,
+    0, 1),
+  nrow = 2, byrow = TRUE,
+  dimnames = list(
+    c("Predicted Non-Responder", "Predicted Responder"),  # rows
+    c("Actual Non-Responder",    "Actual Responder")      # columns
+  )
+)
+
+# 2) Convert to a data frame for ggplot
+conf_mat_df <- as.data.frame.table(conf_mat)
+colnames(conf_mat_df) <- c("Prediction", "Reference", "Freq")
+
+# 3) Mark each cell as Correct vs. Incorrect (diagonal vs. off-diagonal)
+conf_mat_df$Color <- ifelse(
+  (conf_mat_df$Prediction == "Predicted Non-Responder" & 
+   conf_mat_df$Reference  == "Actual Non-Responder") |
+  (conf_mat_df$Prediction == "Predicted Responder" & 
+   conf_mat_df$Reference  == "Actual Responder"),
+  "Correct",
+  ifelse(conf_mat_df$Freq == 0, "No Data", "Incorrect")
+)
+
+# 4) Plot heatmap with ggplot
+ggplot(conf_mat_df, aes(x = Reference, y = Prediction, fill = Color)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = Freq), color = "black", size = 8) +
+  scale_fill_manual(
+    "Classification",
+    values = c("Correct"   = "#5ab4ac",  # teal
+               "Incorrect" = "#e9a3c9",  # pink
+               "No Data"   = "white")    # zero-frequency cells
+  ) +
+  coord_fixed() +
+  labs(x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(
+    panel.border    = element_rect(color = "black", fill = NA, size = 1),
+    legend.position = "top",
+    legend.title    = element_text(size = 16),
+    legend.text     = element_text(size = 16),
+    axis.text       = element_text(size = 16, color = "black"),
+    axis.title      = element_text(size = 16, face = "bold"),
+    plot.title      = element_text(size = 16, face = "bold", hjust = 0.5)
+  ) -> fig.3.confusion.matrix.leaner.bmi
+fig.3.confusion.matrix.leaner.bmi
+
+#ggsave("fig.3.confusion.matrix.leaner.bmi.pdf", plot = fig.3.confusion.matrix.leaner.bmi, width = 12, height = 10)
+
+#######################
+##### feature importance
+########################
+
+rf_model <- model.short.bmi$finalModel
+
+gini_importance <- importance(rf_model, type = 2)  # Type 2 is Mean Decrease Gini
+
+gini_importance_df <- data.frame(
+  Feature = rownames(gini_importance),
+  Importance = gini_importance[, "MeanDecreaseGini"]
+)
+
+gini <- gini_importance_df
+gini$Feature  <- gsub(pattern = "\\.", replace = " ", x = gini$Feature )
+gini$Feature  <- gsub(pattern = "^NA", replace = "", x = gini$Feature )
+
+gini <- gini %>%
+  mutate(
+    Feature = str_trim(Feature),  # remove leading/trailing spaces
+    Feature = recode(Feature,
+      "Oscillibacter sp  57_20" = "Oscillibacter sp. 57_20",
+      "Faecalibacterium species incertae sedis" = "Faecalibacterium sp. incertae sedis",
+      "ldl" = "LDL",
+      "sys_mean" = "Sys BP"
+    )
+  )
+
+feature_labels <- c(
+  "Oscillibacter sp. 57_20" = "Oscilli sp.\n57_20",
+  "Faecalibacterium sp. incertae sedis" = "Faecali sp.\nincertae sedis",
+  "Sys BP" = "Sys BP",
+  "LDL" = "LDL"
+)
+
+ggplot(gini, aes(x = reorder(Feature, Importance), y = Importance, fill = Feature)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  coord_flip() +
+  scale_x_discrete(labels = feature_labels) +  # custom y-axis with line breaks
+  theme_minimal() +
+  labs(
+    x = "Features",
+    y = "Feature importance (Gini index)"
+  ) +
+  ylim(c(0, max(gini$Importance) + 1)) +
+  theme(
+    axis.text = element_text(size = 24, color = "black"),
+    axis.title = element_text(size = 24, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  ) +
+  scale_fill_manual(values = c("#fc8d59", "grey", "#0072B2", "#FFA8BB", "#00998F")) -> fig.3.feature.importance.model.short.bmi
+ggsave("fig.3.feature.importance.model.short.bmi.pdf", plot = fig.3.feature.importance.model.short.bmi, width = 8, height = 8)
+fig.3.feature.importance.model.short.bmi
+```
+
+
+### Calculating ROC curve
+```{r}
+# ROC curve: what are the probabilities for each classification?
+# what are the probabilities?
+predicted_probs_leaner <- predict(model.short, newdata = test.data, type = "prob")
+
+# Check the structure of predicted probabilities
+str(predicted_probs_leaner)
+
+samp.leaner <- class.data.cluster %>%
+  select(Probanden_ID, responder_mean)
+
+samp.leaner <- samp.leaner[rownames(samp.leaner) %in% rownames(predicted_probs_leaner), ]
+
+combined_data_leaner <- cbind(samp.leaner, predicted_probs_leaner)
+colnames(combined_data_leaner) <- c("sample", "responder_calculated", "0", "1")
+
+# Check the combined data
+head(combined_data_leaner)
+
+# Create a prediction object
+library(ROCR)
+pred_leaner <- prediction(combined_data_leaner$`1`, combined_data_leaner$responder_calculated)
+
+# Compute the performance measures
+perf <- performance(pred_leaner, measure = "tpr", x.measure = "fpr")
+
+# Extract the data for plotting
+roc_data_leaner <- data.frame(
+  FPR = perf@x.values[[1]],
+  TPR = perf@y.values[[1]],
+  Cutoff = perf@alpha.values[[1]]
+)
+
+# Calculate and print the AUC
+auc <- performance(pred_leaner, measure = "auc")
+auc <- auc@y.values[[1]]
+print(paste("Area Under the ROC Curve:", round(auc, 2)))
+
+# Plot the ROC curve
+ggplot(roc_data_leaner, aes(x = FPR, y = TPR)) +
+  geom_line(size = 1, color = "steelblue") +
+  geom_abline(linetype = "dashed", color = "red") +  # Add diagonal line
+  annotate("text", x = 0.6, y = 0.2, label = paste("AUC =", round(auc, 2)), size = 10) +
+  scale_x_continuous(limits = c(0, 1), expand = c(0, 0), name = "False Positive Rate") +
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0), name = "True Positive Rate") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title = element_text(size = 24, color = "black"),
+    axis.text = element_text(size = 24, color = "black"),
+    legend.position = "bottom",
+    panel.border = element_rect(color = "black", fill = NA,  size = 1),
+    axis.line = element_blank()
+  ) -> fig.3.ROC.LEANER
+
+```
+
+## Repeated 80/20 Monte-Carlo CV (100 repeats)
+repeat the 80/20 split many times; train each time (with inner CV for tuning), predict on the held-out 20%, collect metrics and feature importances; then summarize.
+
+```{r}
+## ===============================
+## Random Forest: Repeated CV + Nested CV 
+## ===============================
+library(caret)
+library(pROC)
+library(randomForest)
+
+
+#####################
+####### Repeated 80/20 with inner CV
+#############################
+# Outer split: random 80% train / 20% test, repeated 100 times.
+# Inner CV: 5-fold inside each 80% to pick the best mtry.
+# What you get: a distribution of performance (median, IQR), showing stability/variance across many random splits.
+# → Answers “Could our result be a lucky split?”
+
+
+set.seed(42)
+
+## ---- 0) DATA PREP 
+dat <- df %>%
+  select(!BMI) %>%
+  mutate(
+    responder_mean = factor(
+      ifelse(as.character(responder_mean) %in% c("1", 1, "Responder"),
+             "Responder", "NonResponder"),
+      levels = c("Responder", "NonResponder")
+    )
+  ) %>%
+  drop_na()
+
+# number of predictors
+p <- ncol(dat) - 1
+
+##############################################
+## ---- 1) robust varImp extractor (builds an Overall column)
+#####################################
+### after training the model, this function pulls variable importance from caret::varImp() and returns a table with feature, its importance and how often it came up 
+
+get_vi <- function(fit, iter_or_fold){
+  vi_obj <- caret::varImp(fit, scale = FALSE)
+  imp_raw <- tryCatch(vi_obj$importance, error = function(e) as.data.frame(vi_obj))
+  imp_df <- as.data.frame(imp_raw)
+
+  if(!"Overall" %in% colnames(imp_df)){
+    if(ncol(imp_df) > 1){
+      imp_df$Overall <- rowMeans(imp_df, na.rm = TRUE)
+    } else {
+      colnames(imp_df) <- "Overall"
+    }
+  }
+
+  tibble(
+    Feature    = rownames(imp_df),
+    Importance = imp_df[ , "Overall", drop = TRUE],
+    iter       = iter_or_fold
+  )
+}
+
+
+#######################################
+## ---- 2) Common training controls & grid ----
+##########################################
+# mtry is the RF hyperparameter (how many features are considered at each split)
+# inner 5-fold CV = we try different mtry values and pick the one with the best ROC
+
+rf_ntree <- 1000
+rf_grid  <- expand.grid(mtry = seq(1, min(p, floor(sqrt(p)) + 2), by = 1))
+
+ctrl_inner <- trainControl(
+  method = "cv", number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,  
+  savePredictions = "final",
+  allowParallel = TRUE
+)
+
+##########################
+## A) Repeated 80/20 Monte-Carlo CV (FULL MODEL)
+#########################
+# we do the resampling for 100 times
+
+B <- 100
+metrics_mc  <- vector("list", B)
+imp_mc_list <- vector("list", B)
+
+for(b in seq_len(B)){
+  # stratified 80/20 split
+  tr_idx <- createDataPartition(dat$responder_mean, p = 0.8, list = FALSE)
+  tr <- dat[tr_idx, ]
+  te <- dat[-tr_idx, ]
+
+  # train on 80% with inner CV (optimize ROC)
+  fit_b <- train(
+    responder_mean ~ .,
+    data = tr,
+    method = "rf",
+    metric = "ROC",
+    trControl = ctrl_inner,
+    tuneGrid = rf_grid,
+    ntree = rf_ntree,
+    importance = TRUE
+  )
+
+  # predict probs on held-out 20%
+  prob <- predict(fit_b, newdata = te, type = "prob")[, "Responder"]
+  pred <- factor(ifelse(prob >= 0.5, "Responder", "NonResponder"),
+                 levels = c("Responder", "NonResponder"))
+
+  # metrics (positive class = Responder)
+  roc_obj <- pROC::roc(response = te$responder_mean,
+                       predictor = prob,
+                       levels = c("NonResponder","Responder"),
+                       direction = "<")
+  cm <- caret::confusionMatrix(pred, te$responder_mean, positive = "Responder")
+
+  metrics_mc[[b]] <- tibble(
+    iter      = b,
+    AUC       = as.numeric(pROC::auc(roc_obj)),
+    Accuracy  = as.numeric(cm$overall["Accuracy"]),
+    Sensitivity = as.numeric(cm$byClass["Sensitivity"]),
+    Specificity = as.numeric(cm$byClass["Specificity"]),
+    Best_mtry = fit_b$bestTune$mtry
+  )
+
+  imp_mc_list[[b]] <- get_vi(fit_b, b)
+}
+
+### summary of the result, save AUC. Accuaracy, Sensitivity, Specificity and which mtry was chosen
+mc_metrics     <- bind_rows(metrics_mc)
+mc_importance  <- bind_rows(imp_mc_list)
+
+## Summaries you can report (median/IQR over repeats)
+## gives median and IQR of the key metrics across the 100 repeats → this shows typical performance and its spread.
+mc_summary <- mc_metrics %>%
+  summarise(
+    AUC_median = median(AUC, na.rm=TRUE),
+    AUC_IQR_L  = quantile(AUC, 0.25, na.rm=TRUE),
+    AUC_IQR_U  = quantile(AUC, 0.75, na.rm=TRUE),
+    Acc_median = median(Accuracy, na.rm=TRUE),
+    Sens_median= median(Sensitivity, na.rm=TRUE),
+    Spec_median= median(Specificity, na.rm=TRUE)
+  )
+print(mc_summary)
+
+## Feature stability: Top-k frequency across repeats
+# median and IQR of the key metrics across the 100 repeats → this shows typical performance and its spread.
+k <- 5
+mc_stability <- mc_importance %>%
+  group_by(iter) %>%
+  slice_max(order_by = Importance, n = k, with_ties = FALSE) %>%
+  ungroup() %>%
+  count(Feature, name = "TopK_hits") %>%
+  arrange(desc(TopK_hits)) %>%
+  mutate(TopK_freq = TopK_hits / B)
+mc_stability %>% print(n = 30)
+
+mc_mean_importance <- mc_importance %>%
+  group_by(Feature) %>%
+  summarise(MeanImportance = mean(Importance, na.rm=TRUE),
+            SDImportance   = sd(Importance, na.rm=TRUE)) %>%
+  arrange(desc(MeanImportance))
+mc_mean_importance 
+
+## AUC distribution plot for supplement
+ggplot(mc_metrics, aes(x = AUC)) + geom_histogram(bins = 20) + theme_minimal()
+
+#(1) cleaned labels, (2) defined a tuning grid, (3) repeated a stratified 80/20 split 100 times, (4) tuned mtry inside the 80% via 5-fold CV each time, (5) tested on the 20%, (6) saved metrics and feature importances, and (7) summarized medians/IQRs and feature stability.
+```
+
+```{r}
+## ===============================
+## B) Nested CV (FULL MODEL) — outer 5-fold, inner 5-fold
+## ===============================
+# Outer split: 5 folds (≈20% test each), cycling so every sample is test once.
+# Inner CV: the same 5-fold tuning inside each outer training fold.
+# what we get: one unbiased estimate (mean ± SD across the 5 outer folds).
+# → Answers “What’s our overall generalization when every point serves as test exactly once?”
+# this should give the same results then the repeated 80/20 with inner CV. We will keep repeated 80/20 for the distribution, and mention that we confirmed with a 5x5 nested CV giving similar mean +- SD
+
+
+K_outer <- 5
+outer_folds <- createFolds(dat$responder_mean, k = K_outer, list = TRUE, returnTrain = TRUE)
+
+metrics_nested <- vector("list", K_outer)
+imp_nested    <- vector("list", K_outer)
+
+for(k in seq_len(K_outer)){
+  tr <- dat[ outer_folds[[k]], ]
+  te <- dat[-outer_folds[[k]], ]
+
+  fit_k <- train(
+    responder_mean ~ .,
+    data = tr,
+    method = "rf",
+    metric = "ROC",
+    trControl = ctrl_inner,   # inner CV happens here
+    tuneGrid = rf_grid,
+    ntree = rf_ntree,
+    importance = TRUE
+  )
+
+  prob <- predict(fit_k, newdata = te, type = "prob")[, "Responder"]
+  pred <- factor(ifelse(prob >= 0.5, "Responder", "NonResponder"),
+                 levels = c("Responder", "NonResponder"))
+
+  roc_k <- pROC::roc(response = te$responder_mean,
+                     predictor = prob,
+                     levels = c("NonResponder","Responder"),
+                     direction = "<")
+  cm_k  <- caret::confusionMatrix(pred, te$responder_mean, positive = "Responder")
+
+  metrics_nested[[k]] <- tibble(
+    fold      = k,
+    AUC       = as.numeric(pROC::auc(roc_k)),
+    Accuracy  = as.numeric(cm_k$overall["Accuracy"]),
+    Sensitivity = as.numeric(cm_k$byClass["Sensitivity"]),
+    Specificity = as.numeric(cm_k$byClass["Specificity"]),
+    Best_mtry = fit_k$bestTune$mtry
+  )
+
+  imp_nested[[k]] <- get_vi(fit_k, k)
+}
+
+nested_perf <- bind_rows(metrics_nested)
+nested_vi   <- bind_rows(imp_nested)
+
+## Unbiased performance estimate (mean ± SD across outer folds)
+nested_summary <- nested_perf %>%
+  summarise(
+    AUC_mean = mean(AUC), AUC_sd = sd(AUC),
+    Acc_mean = mean(Accuracy), Acc_sd = sd(Accuracy),
+    Sens_mean= mean(Sensitivity), Sens_sd = sd(Sensitivity),
+    Spec_mean= mean(Specificity), Spec_sd = sd(Specificity)
+  )
+print(nested_summary)
+
+## Feature stability across outer folds (Top-5 frequency)
+nested_stability <- nested_vi %>%
+  group_by(iter) %>%  # here iter == outer fold id
+  mutate(rank = rank(-Importance, ties.method = "first")) %>%
+  ungroup() %>%
+  count(Feature, wt = (rank <= 5), name = "Top5_hits") %>%
+  mutate(Top5_freq = Top5_hits / K_outer) %>%
+  arrange(desc(Top5_freq), desc(Top5_hits))
+nested_stability %>% print(n = 30)
+
+```
+
+
+```{r}
+## ===============================
+## SHORT MODEL variants
+## ===============================
+## Use your 4 features 
+
+dat <- df %>%
+  select(!BMI) %>%
+  mutate(
+    responder_mean = factor(
+      ifelse(as.character(responder_mean) %in% c("1", 1, "Responder"),
+             "Responder", "NonResponder"),
+      levels = c("Responder", "NonResponder")
+    )
+  ) %>%
+  drop_na()
+
+short_features <- c("Oscillibacter.sp..57_20.",
+                     "NA.Faecalibacterium.species.incertae.sedis", "ldl",
+                     "sys_mean")
+
+  dat_short <- dat %>% select(all_of(c(short_features, "responder_mean")))
+
+  #(Re)use rf_grid tailored to number of predictors
+  p_short <- ncol(dat_short) - 1
+  rf_grid_short <- expand.grid(mtry = seq(1, min(p_short, floor(sqrt(p_short)) + 2), by = 1))
+
+ # ---- Repeated MC CV for short model ----
+  B <- 100
+  metrics_mc_short  <- vector("list", B)
+  imp_mc_short_list <- vector("list", B)
+  for(b in seq_len(B)){
+    tr_idx <- createDataPartition(dat_short$responder_mean, p = 0.8, list = FALSE)
+    tr <- dat_short[tr_idx, ]; te <- dat_short[-tr_idx, ]
+    fit_b <- train(responder_mean ~ ., data = tr, method = "rf", metric = "ROC",
+                   trControl = ctrl_inner, tuneGrid = rf_grid_short,
+                   ntree = rf_ntree, importance = TRUE)
+    prob <- predict(fit_b, newdata = te, type = "prob")[, "Responder"]
+    pred <- factor(ifelse(prob >= 0.5, "Responder", "NonResponder"),
+                   levels = c("Responder","NonResponder"))
+    roc_obj <- pROC::roc(te$responder_mean, prob, levels = c("NonResponder","Responder"), direction = "<")
+    cm <- caret::confusionMatrix(pred, te$responder_mean, positive = "Responder")
+    metrics_mc_short[[b]] <- tibble(iter=b, AUC=as.numeric(pROC::auc(roc_obj)),
+                                    Accuracy=as.numeric(cm$overall["Accuracy"]),
+                                    Sensitivity=as.numeric(cm$byClass["Sensitivity"]),
+                                    Specificity=as.numeric(cm$byClass["Specificity"]),
+                                    Best_mtry = fit_b$bestTune$mtry)
+    imp_mc_short_list[[b]] <- get_vi(fit_b, b)
+  }
+  mc_metrics_short    <- bind_rows(metrics_mc_short)
+  mc_importance_short <- bind_rows(imp_mc_short_list)
+```
+
+
+### train model on full data for application in another dataset
+```{r}
+# Train final model on full data
+final_fit <- train(
+  responder_mean ~ ., 
+  data = dat_short, 
+  method = "rf", 
+  metric = "ROC",
+  trControl = ctrl_inner, 
+  tuneGrid = rf_grid_short,
+  ntree = rf_ntree,
+  importance = TRUE
+)
+
+
+###### train a model without ldl
+dat_short_no_ldl <- dat_short %>%
+  select(!ldl)
+
+final_fit_no_ldl <- train(
+  responder_mean ~ ., 
+  data = dat_short_no_ldl, 
+  method = "rf", 
+  metric = "ROC",
+  trControl = ctrl_inner, 
+  tuneGrid = rf_grid_short,
+  ntree = rf_ntree,
+  importance = TRUE
+)
+
+```
+
+## Repeated 80/20 CV - performance summary + ploots + stability
+
+```{r}
+# Median [IQR] across 100 repeats
+mc_summary_short <- mc_metrics_short %>%
+  summarise(
+    AUC_median = median(AUC, na.rm=TRUE),
+    AUC_IQR_L  = quantile(AUC, 0.25, na.rm=TRUE),
+    AUC_IQR_U  = quantile(AUC, 0.75, na.rm=TRUE),
+    Acc_median = median(Accuracy, na.rm=TRUE),
+    Acc_IQR_L  = quantile(Accuracy, 0.25, na.rm=TRUE),
+    Acc_IQR_U  = quantile(Accuracy, 0.75, na.rm=TRUE),
+    Sens_median= median(Sensitivity, na.rm=TRUE),
+    Sens_IQR_L = quantile(Sensitivity, 0.25, na.rm=TRUE),
+    Sens_IQR_U = quantile(Sensitivity, 0.75, na.rm=TRUE),
+    Spec_median= median(Specificity, na.rm=TRUE),
+    Spec_IQR_L = quantile(Specificity, 0.25, na.rm=TRUE),
+    Spec_IQR_U = quantile(Specificity, 0.75, na.rm=TRUE)
+  )
+print(mc_summary_short)
+
+# 95% percentile CIs (optional, for supplement)
+mc_ci_short <- mc_metrics_short %>%
+  summarise(
+    AUC_CI_L  = quantile(AUC, 0.025, na.rm=TRUE),
+    AUC_CI_U  = quantile(AUC, 0.975, na.rm=TRUE),
+    Acc_CI_L  = quantile(Accuracy, 0.025, na.rm=TRUE),
+    Acc_CI_U  = quantile(Accuracy, 0.975, na.rm=TRUE)
+  )
+print(mc_ci_short)
+
+# Distribution of mtry chosen in inner CV
+mtry_dist_short <- mc_metrics_short %>%
+  count(Best_mtry, name = "n") %>%
+  mutate(freq = n / sum(n)) %>%
+  arrange(desc(n))
+print(mtry_dist_short)
+
+# Top-k feature stability over repeats (k=all features here = 5)
+k <- 5
+mc_stability_short <- mc_importance_short %>%
+  group_by(iter) %>%
+  slice_max(order_by = Importance, n = k, with_ties = FALSE) %>%
+  ungroup() %>%
+  count(Feature, name = "TopK_hits") %>%
+  mutate(TopK_freq = TopK_hits / n_distinct(mc_importance_short$iter)) %>%
+  arrange(desc(TopK_freq), desc(TopK_hits))
+print(mc_stability_short)
+
+# Mean importance across repeats (helps ranking)
+mc_mean_importance_short <- mc_importance_short %>%
+  group_by(Feature) %>%
+  summarise(MeanImportance = mean(Importance, na.rm=TRUE),
+            SDImportance   = sd(Importance, na.rm=TRUE)) %>%
+  arrange(desc(MeanImportance))
+print(mc_mean_importance_short)
+
+# Quick plots (optional)
+ggplot(mc_metrics_short, aes(x = AUC)) +
+  geom_histogram(bins = 20) + theme_minimal() +
+  labs(title = "Short model: AUC distribution (100 repeats)") -> AUC.distribution.short
+ggsave(AUC.distribution.short, file = "AUC.distribution.short.pdf", width = 5, height = 5)
+
+
+ggplot(mc_metrics_short, aes(y = AUC, x = 1)) +
+  geom_boxplot(width = 0.2) + theme_minimal() +
+  labs(title = "Short model: AUC (median[IQR])", x = NULL) -> Median.AUC.short
+ggsave(Median.AUC.short, file = "Median.AUC.short.pdf", width = 5, height = 5)
+
+
+# prevalence and class balance
+table(dat_short$responder_mean)
+prop.table(table(dat_short$responder_mean))
+
+
+
+## balances accurracy
+# Re-run repeated 80/20 for short model to also collect predictions
+B <- 100
+metrics_mc_short  <- vector("list", B)
+imp_mc_short_list <- vector("list", B)
+pred_store_short  <- vector("list", B)
+
+for(b in seq_len(B)){
+  tr_idx <- createDataPartition(dat_short$responder_mean, p = 0.8, list = FALSE)
+  tr <- dat_short[tr_idx, ]; te <- dat_short[-tr_idx, ]
+
+  fit_b <- train(responder_mean ~ ., data = tr, method = "rf", metric = "ROC",
+                 trControl = ctrl_inner, tuneGrid = rf_grid_short,
+                 ntree = rf_ntree, importance = TRUE)
+
+  prob <- predict(fit_b, newdata = te, type = "prob")[, "Responder"]
+  pred <- factor(ifelse(prob >= 0.5, "Responder", "NonResponder"),
+                 levels = c("Responder","NonResponder"))
+
+  roc_obj <- pROC::roc(te$responder_mean, prob,
+                       levels = c("NonResponder","Responder"), direction = "<")
+  cm <- caret::confusionMatrix(pred, te$responder_mean, positive = "Responder")
+
+  # confusion-matrix-derived metrics
+  TN <- cm$table["NonResponder","NonResponder"]; TP <- cm$table["Responder","Responder"]
+  FP <- cm$table["Responder","NonResponder"];    FN <- cm$table["NonResponder","Responder"]
+  Precision <- ifelse((TP+FP)==0, NA, TP/(TP+FP))
+  Recall    <- ifelse((TP+FN)==0, NA, TP/(TP+FN))  # = Sensitivity
+  F1        <- ifelse(is.na(Precision) | is.na(Recall) | (Precision+Recall)==0, NA,
+                      2*Precision*Recall/(Precision+Recall))
+  BalAcc    <- (as.numeric(cm$byClass["Sensitivity"]) + as.numeric(cm$byClass["Specificity"]))/2
+  MCC       <- ifelse((TP+FP)==0 | (TP+FN)==0 | (TN+FP)==0 | (TN+FN)==0, NA,
+                      ((TP*TN - FP*FN) / sqrt((TP+FP)*(TP+FN)*(TN+FP)*(TN+FN))))
+
+  metrics_mc_short[[b]] <- tibble(
+    iter=b,
+    AUC=as.numeric(pROC::auc(roc_obj)),
+    Accuracy=as.numeric(cm$overall["Accuracy"]),
+    Sensitivity=as.numeric(cm$byClass["Sensitivity"]),
+    Specificity=as.numeric(cm$byClass["Specificity"]),
+    Precision=Precision, Recall=Recall, F1=F1,
+    BalancedAccuracy = BalAcc,
+    MCC = MCC,
+    Best_mtry = fit_b$bestTune$mtry
+  )
+
+  imp_mc_short_list[[b]] <- get_vi(fit_b, b)
+  pred_store_short[[b]]  <- tibble(iter=b, truth=te$responder_mean, prob=prob, pred=pred)
+}
+
+mc_metrics_short    <- bind_rows(metrics_mc_short)
+mc_importance_short <- bind_rows(imp_mc_short_list)
+preds_short         <- bind_rows(pred_store_short)
+
+# Summaries to report
+mc_summary_short_ext <- mc_metrics_short %>%
+  summarise(
+    AUC_median = median(AUC, na.rm=TRUE),
+    AUC_IQR_L  = quantile(AUC, 0.25, na.rm=TRUE),
+    AUC_IQR_U  = quantile(AUC, 0.75, na.rm=TRUE),
+    Acc_median = median(Accuracy, na.rm=TRUE),
+    BalAcc_median = median(BalancedAccuracy, na.rm=TRUE),
+    F1_median  = median(F1, na.rm=TRUE),
+    MCC_median = median(MCC, na.rm=TRUE)
+  )
+print(mc_summary_short_ext)
+
+
+### calculate specicifiy and accuarcy
+mc_summary_short_meansd <- mc_metrics_short %>%
+  summarise(
+    AUC_mean = mean(AUC, na.rm=TRUE),       AUC_sd = sd(AUC, na.rm=TRUE),
+    Acc_mean = mean(Accuracy, na.rm=TRUE),  Acc_sd = sd(Accuracy, na.rm=TRUE),
+    Sens_mean= mean(Sensitivity, na.rm=TRUE), Sens_sd = sd(Sensitivity, na.rm=TRUE),
+    Spec_mean= mean(Specificity, na.rm=TRUE), Spec_sd = sd(Specificity, na.rm=TRUE)
+  )
+
+# Format into "mean ± sd" strings
+perf_table_repeated <- tibble::tibble(
+  Metric = c("AUC","Accuracy","Sensitivity","Specificity"),
+  Value  = c(
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$AUC_mean, mc_summary_short_meansd$AUC_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$Acc_mean, mc_summary_short_meansd$Acc_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$Sens_mean, mc_summary_short_meansd$Sens_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$Spec_mean, mc_summary_short_meansd$Spec_sd)
+  )
+)
+
+
+### precision-recall AUC 
+###thats a good way to adress the issue that we have an unbalanced dataset (1/3 responder. 2/3 non repsonder). AP is stricter that ROC-AUC: it asks when the model calls someone a responder, how often is it correct, and how completly does it find them?
+
+library(PRROC)
+ap_tbl <- preds_short %>%
+  group_by(iter) %>%
+  summarise(
+    AP = {
+      pos <- prob[truth=="Responder"]; neg <- prob[truth=="NonResponder"]
+      if(length(pos)>0 && length(neg)>0)
+        PRROC::pr.curve(scores.class0 = pos, scores.class1 = neg, curve = FALSE)$auc.integral
+      else NA_real_
+    },
+    .groups="drop"
+  )
+ap_summary <- ap_tbl %>%
+  summarise(AP_median = median(AP, na.rm=TRUE),
+            AP_IQR_L  = quantile(AP, 0.25, na.rm=TRUE),
+            AP_IQR_U  = quantile(AP, 0.75, na.rm=TRUE))
+print(ap_summary)
+
+# The short model achieved a median average precision of 0.80 [0.67–1.00], substantially higher than the responder prevalence (~0.38). This indicates that, when the model predicts a responder, it is correct most of the time, although performance varied across splits.
+
+
+## rank satbility
+rankstab_short <- mc_importance_short %>%
+  group_by(iter) %>%
+  arrange(desc(Importance), .by_group = TRUE) %>%
+  mutate(rank = row_number()) %>%
+  ungroup() %>%
+  group_by(Feature) %>%
+  summarise(
+    MedianRank = median(rank),
+    IQR_L = quantile(rank, 0.25),
+    IQR_U = quantile(rank, 0.75),
+    .groups="drop"
+  ) %>%
+  arrange(MedianRank)
+print(rankstab_short)
+
+#rankstab_short
+# Across 100 resamples, feature ranking was stable: Oscillibacter was consistently the top predictor (median rank 1 [IQR 1–2]), followed by Faecalibacterium (2 [1–2]). Systolic BP ranked stably third, while LDL was always last. This reinforces that prediction in the short model was mainly driven by the two microbiome features.
+
+```
+
+```{r}
+## ===== Short model performance: mean ± SD =====
+mc_summary_short_meansd <- mc_metrics_short %>%
+  summarise(
+    AUC_mean = mean(AUC, na.rm=TRUE),       AUC_sd = sd(AUC, na.rm=TRUE),
+    Acc_mean = mean(Accuracy, na.rm=TRUE),  Acc_sd = sd(Accuracy, na.rm=TRUE),
+    Sens_mean= mean(Sensitivity, na.rm=TRUE), Sens_sd = sd(Sensitivity, na.rm=TRUE),
+    Spec_mean= mean(Specificity, na.rm=TRUE), Spec_sd = sd(Specificity, na.rm=TRUE),
+    BalAcc_mean = mean(BalancedAccuracy, na.rm=TRUE), BalAcc_sd = sd(BalancedAccuracy, na.rm=TRUE),
+    F1_mean = mean(F1, na.rm=TRUE), F1_sd = sd(F1, na.rm=TRUE),
+    MCC_mean = mean(MCC, na.rm=TRUE), MCC_sd = sd(MCC, na.rm=TRUE)
+  )
+
+perf_short <- tibble::tibble(
+  Metric = c("AUC","Accuracy","Sensitivity","Specificity","Balanced Accuracy","F1","MCC"),
+  Value  = c(
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$AUC_mean, mc_summary_short_meansd$AUC_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$Acc_mean, mc_summary_short_meansd$Acc_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$Sens_mean, mc_summary_short_meansd$Sens_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$Spec_mean, mc_summary_short_meansd$Spec_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$BalAcc_mean, mc_summary_short_meansd$BalAcc_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$F1_mean, mc_summary_short_meansd$F1_sd),
+    sprintf("%.2f ± %.2f", mc_summary_short_meansd$MCC_mean, mc_summary_short_meansd$MCC_sd)
+  )
+)
+
+print(perf_short)
+
+
+## ===== Short model feature importance + rank stability =====
+feature_table_short <- mc_importance_short %>%
+  group_by(Feature) %>%
+  summarise(
+    MeanImportance = mean(Importance, na.rm=TRUE),
+    SDImportance   = sd(Importance, na.rm=TRUE),
+    .groups="drop"
+  )
+
+rankstab_short <- mc_importance_short %>%
+  group_by(iter) %>%
+  arrange(desc(Importance), .by_group = TRUE) %>%
+  mutate(rank = row_number()) %>%
+  ungroup() %>%
+  group_by(Feature) %>%
+  summarise(
+    MedianRank = median(rank),
+    IQR_L = quantile(rank, 0.25),
+    IQR_U = quantile(rank, 0.75),
+    .groups="drop"
+  )
+
+features_summary_short <- left_join(feature_table_short, rankstab_short, by = "Feature") %>%
+  mutate(
+    `Importance (mean ± SD)` = sprintf("%.2f ± %.2f", MeanImportance, SDImportance),
+    `Rank (median [IQR])`    = sprintf("%.0f [%.0f–%.0f]", MedianRank, IQR_L, IQR_U)
+  ) %>%
+  arrange(MedianRank) %>%                         # <-- arrange while MedianRank still exists
+  select(Feature, `Importance (mean ± SD)`, `Rank (median [IQR])`)
+
+print(features_summary_short)
+
+```
+
+## nested CV to validate results from the short model
+```{r}
+## ===============================
+## Nested CV for SHORT MODEL (caret)
+## Outer 5-fold, Inner 5-fold (or 3-fold)
+## ===============================
+
+library(tidyverse)
+library(caret)
+library(pROC)
+library(randomForest)
+
+set.seed(2025)
+
+## ---- 0) Build the short-model dataset (4 features + outcome) ----
+short_features <- c("Oscillibacter.sp..57_20.",
+                    "NA.Faecalibacterium.species.incertae.sedis",
+                    "ldl", "sys_mean")
+
+dat_short <- df %>%
+  # ensure valid two-class factor with positive class first
+  mutate(
+    responder_mean = factor(
+      ifelse(as.character(responder_mean) %in% c("1", 1, "Responder"),
+             "Responder", "NonResponder"),
+      levels = c("Responder", "NonResponder")
+    )
+  ) %>%
+  select(all_of(c(short_features, "responder_mean"))) %>%
+  drop_na()
+
+## ---- 1) Random Forest settings ----
+rf_ntree <- 1000
+p_short  <- ncol(dat_short) - 1
+rf_grid_short <- expand.grid(mtry = seq(1, min(p_short, floor(sqrt(p_short)) + 2), by = 1))
+# With 4 features this is typically mtry = 1:4
+
+## ---- 2) Inner CV control (choose ONE) ----
+# A) Inner 5-fold (default)
+ctrl_inner5 <- trainControl(
+  method = "cv", number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,  # optimize ROC
+  savePredictions = "final",
+  allowParallel = TRUE
+)
+
+# B) Inner 3-fold (recommended if n is very small)
+ctrl_inner3 <- trainControl(
+  method = "cv", number = 3,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final",
+  allowParallel = TRUE
+)
+
+## ---- 3) Helper: robust varImp extractor ----
+get_vi <- function(fit, outer_id){
+  vi_obj <- caret::varImp(fit, scale = FALSE)
+  imp_raw <- tryCatch(vi_obj$importance, error = function(e) as.data.frame(vi_obj))
+  imp_df  <- as.data.frame(imp_raw)
+  if(!"Overall" %in% colnames(imp_df)){
+    if(ncol(imp_df) > 1) imp_df$Overall <- rowMeans(imp_df, na.rm = TRUE) else colnames(imp_df) <- "Overall"
+  }
+  tibble(
+    Feature    = rownames(imp_df),
+    Importance = imp_df[, "Overall", drop = TRUE],
+    fold       = outer_id
+  )
+}
+
+## ---- 4) Outer 5-fold splits (stratified) ----
+K_outer <- 5
+outer_folds <- createFolds(dat_short$responder_mean, k = K_outer, list = TRUE, returnTrain = TRUE)
+
+metrics_nested_short <- vector("list", K_outer)
+imp_nested_short     <- vector("list", K_outer)
+
+## ---- 5) Nested CV loop ----
+for(k in seq_len(K_outer)){
+  tr <- dat_short[ outer_folds[[k]], ]
+  te <- dat_short[-outer_folds[[k]], ]
+
+  # Pick inner control here: ctrl_inner5 OR ctrl_inner3
+  fit_k <- train(
+    responder_mean ~ .,
+    data = tr,
+    method = "rf",
+    metric = "ROC",
+    trControl = ctrl_inner5,          # <-- swap to ctrl_inner3 if desired
+    tuneGrid = rf_grid_short,
+    ntree = rf_ntree,
+    importance = TRUE
+  )
+
+  # Predict on outer test fold
+  prob <- predict(fit_k, newdata = te, type = "prob")[, "Responder"]
+  pred <- factor(ifelse(prob >= 0.5, "Responder", "NonResponder"),
+                 levels = c("Responder", "NonResponder"))
+
+  # Metrics on outer test fold
+  roc_k <- pROC::roc(response = te$responder_mean,
+                     predictor = prob,
+                     levels = c("NonResponder","Responder"),
+                     direction = "<")
+  cm_k  <- caret::confusionMatrix(pred, te$responder_mean, positive = "Responder")
+
+  metrics_nested_short[[k]] <- tibble(
+    fold       = k,
+    AUC        = as.numeric(pROC::auc(roc_k)),
+    Accuracy   = as.numeric(cm_k$overall["Accuracy"]),
+    Sensitivity= as.numeric(cm_k$byClass["Sensitivity"]),
+    Specificity= as.numeric(cm_k$byClass["Specificity"]),
+    Best_mtry  = fit_k$bestTune$mtry,
+    n_test     = nrow(te)
+  )
+
+  imp_nested_short[[k]] <- get_vi(fit_k, k)
+}
+
+nested_perf_short <- bind_rows(metrics_nested_short)
+nested_vi_short   <- bind_rows(imp_nested_short)
+
+## ---- 6) Summaries: mean ± SD across outer folds ----
+nested_summary_short <- nested_perf_short %>%
+  summarise(
+    AUC_mean = mean(AUC),            AUC_sd = sd(AUC),
+    Acc_mean = mean(Accuracy),       Acc_sd = sd(Accuracy),
+    Sens_mean= mean(Sensitivity),    Sens_sd = sd(Sensitivity),
+    Spec_mean= mean(Specificity),    Spec_sd = sd(Specificity)
+  )
+
+perf_nested_short_table <- tibble(
+  Metric = c("AUC","Accuracy","Sensitivity","Specificity"),
+  Value  = c(
+    sprintf("%.2f ± %.2f", nested_summary_short$AUC_mean, nested_summary_short$AUC_sd),
+    sprintf("%.2f ± %.2f", nested_summary_short$Acc_mean, nested_summary_short$Acc_sd),
+    sprintf("%.2f ± %.2f", nested_summary_short$Sens_mean, nested_summary_short$Sens_sd),
+    sprintf("%.2f ± %.2f", nested_summary_short$Spec_mean, nested_summary_short$Spec_sd)
+  )
+)
+
+print(perf_nested_short_table)
+
+## ---- 7) Feature stability across outer folds (rank-based) ----
+rankstab_nested_short <- nested_vi_short %>%
+  group_by(fold) %>%
+  arrange(desc(Importance), .by_group = TRUE) %>%
+  mutate(rank = row_number()) %>%
+  ungroup() %>%
+  group_by(Feature) %>%
+  summarise(
+    MedianRank = median(rank),
+    IQR_L      = quantile(rank, 0.25),
+    IQR_U      = quantile(rank, 0.75),
+    .groups="drop"
+  ) %>%
+  arrange(MedianRank)
+
+# Mean ± SD importance across outer folds
+imp_nested_summary <- nested_vi_short %>%
+  group_by(Feature) %>%
+  summarise(
+    MeanImportance = mean(Importance, na.rm = TRUE),
+    SDImportance   = sd(Importance, na.rm = TRUE),
+    .groups="drop"
+  )
+
+features_nested_short_table <- left_join(imp_nested_summary, rankstab_nested_short, by = "Feature") %>%
+  mutate(
+    `Importance (mean ± SD)` = sprintf("%.2f ± %.2f", MeanImportance, SDImportance),
+    `Rank (median [IQR])`    = sprintf("%.0f [%.0f–%.0f]", MedianRank, IQR_L, IQR_U)
+  ) %>%
+  select(Feature, `Importance (mean ± SD)`, `Rank (median [IQR])`) %>%
+  arrange(as.numeric(gsub("[^0-9]", "", `Rank (median [IQR])`)))  # nice order
+
+print(features_nested_short_table)
+
+## (Optional) also inspect per-fold chosen mtry
+table(nested_perf_short$Best_mtry)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+## investigation of responder in LEANER
+```{r}
+# add responder status to meta data
+responder_inf <- class.data.cluster %>%
+  select(Probanden_ID, responder_mean)
+
+## add information to meta data
+meta.leaner <- data.frame(sample_data(PS.tree))
+meta.leaner.r <- meta.leaner %>%
+  left_join(responder_inf, by = "Probanden_ID") %>%
+  filter(!is.na(responder_mean)) %>%
+  rename(responder = responder_mean)
+
+meta.leaner.r$responder <- factor(meta.leaner.r$responder, 
+                                  levels = c(0, 1),
+                                  labels = c("non-responder", "responder"))
+
+########################
+####### Plot bmi
+########################
+meta.leaner.r %>%
+  ggplot(aes(x = Visite, y = BMI, fill = responder)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "BMI (kg/m²)") -> fig.3.bmi.responder
+fig.3.bmi.responder
+
+##########
+### statistics
+##############
+#### statistics for chao 1 index
+meta.leaner.r %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(BMI),
+            sd = sd(BMI))
+
+complete_meta <- meta.leaner.r %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+######
+## non-responder
+#############
+complete_meta %>% 
+  filter(responder == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = BMI ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######
+## responder
+#############
+complete_meta %>% 
+  filter(responder == "responder") %>%
+  pairwise_wilcox_test(
+    formula = BMI ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+complete_meta %>% 
+  group_by(Visite) %>%
+  pairwise_wilcox_test(
+    formula = BMI ~ responder, 
+    paired = FALSE,
+    p.adjust.method = "holm")
+
+
+######################
+###### body fat
+####################
+sample.data.all <- readRDS("rowdata/sample.data.all.rds")
+fat.r <- sample.data.all %>%
+  left_join(responder_inf, by = "Probanden_ID") %>%
+  filter(!is.na(responder_mean)) %>%
+  rename(responder = responder_mean) %>%
+  filter(Visite != "baseline 0")
+
+fat.r$responder <- factor(fat.r$responder, 
+                                  levels = c(0, 1),
+                                  labels = c("non-responder", "responder"))
+
+fat.r %>%
+  ggplot(aes(x = Visite, y = koerperfett, fill = responder)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "bodyfat (%)") -> fig.3.bodyfat.responder
+fig.3.bodyfat.responder
+
+##########
+### statistics
+##############
+#### statistics for chao 1 index
+fat.r %>%
+  group_by(Visite) %>%
+  dplyr::summarize(mean = mean(koerperfett),
+            sd = sd(koerperfett))
+
+complete_meta <- fat.r %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta$Visite <- factor(complete_meta$Visite, 
+                                  levels = c("baseline 1", "fasting", "follow-up"))
+
+complete_meta %>% 
+  group_by(Visite) %>%
+  pairwise_wilcox_test(
+    formula = koerperfett ~ responder, 
+    paired = FALSE,
+    p.adjust.method = "holm")
+
+######
+## non-responder
+#############
+complete_meta %>% 
+  filter(responder == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = koerperfett ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######
+## responder
+#############
+complete_meta %>% 
+  filter(responder == "responder") %>%
+  pairwise_wilcox_test(
+    formula = koerperfett ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+```
+
+## changes in the selected features
+```{r}
+###########
+### ldl
+########
+meta.leaner.r %>%
+  ggplot(aes(x = Visite, y = ldl, fill = responder)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "LDL (mg/dL)") -> fig.3.ldl.responder
+fig.3.ldl.responder
+
+##########
+### statistics
+##############
+#### statistics for chao 1 index
+meta.leaner.r %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(ldl),
+            sd = sd(ldl))
+
+complete_meta <- meta.leaner.r %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  group_by(Visite) %>%
+  pairwise_wilcox_test(
+    formula = ldl ~ responder, 
+    paired = FALSE)
+
+######
+## non-responder
+#############
+complete_meta %>% 
+  filter(responder == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = ldl ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######
+## responder
+#############
+complete_meta %>% 
+  filter(responder == "responder") %>%
+  pairwise_wilcox_test(
+    formula = ldl ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+complete_meta %>% 
+  group_by(responder) %>%
+  pairwise_wilcox_test(
+    formula = ldl ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+
+
+###########
+### systolic blood pressure
+########
+meta.leaner.r %>%
+  ggplot(aes(x = Visite, y = sys_mean, fill = responder)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "sys BP (mmHg)") -> fig.3.sysBP.responder
+fig.3.sysBP.responder
+
+##########
+### statistics
+##############
+#### statistics for chao 1 index
+meta.leaner.r %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(sys_mean),
+            sd = sd(sys_mean))
+
+complete_meta <- meta.leaner.r %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  group_by(Visite) %>%
+  pairwise_wilcox_test(
+    formula = sys_mean ~ responder, 
+    paired = FALSE)
+
+######
+## non-responder
+#############
+complete_meta %>% 
+  filter(responder == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = sys_mean ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######
+## responder
+#############
+complete_meta %>% 
+  filter(responder == "responder") %>%
+  pairwise_wilcox_test(
+    formula = sys_mean ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######################
+###### oscillibacter
+#######################
+all.r <- class_data_all %>%
+  left_join(responder_inf, by = "Probanden_ID") %>%
+  filter(!is.na(responder_mean)) %>%
+  rename(responder = responder_mean)
+
+all.r$responder <- factor(all.r$responder,
+                                       levels = c(0, 1), 
+                                       labels = c("non-responder", "responder"))
+
+all.r %>%
+  ggplot(aes(x = Visite, y = Oscillibacter.sp..57_20., fill = responder)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Oscilli (counts)") -> fig.3.Oscilli.responder
+fig.3.Oscilli.responder
+
+##########
+### statistics
+##############
+#### statistics for chao 1 index
+all.r %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(Oscillibacter.sp..57_20.),
+            sd = sd(Oscillibacter.sp..57_20.))
+
+complete_meta <- all.r %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  group_by(Visite) %>%
+  pairwise_wilcox_test(
+    formula = Oscillibacter.sp..57_20. ~ responder, 
+    paired = FALSE)
+
+######
+## non-responder
+#############
+complete_meta %>% 
+  filter(responder == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = Oscillibacter.sp..57_20. ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######
+## responder
+#############
+complete_meta %>% 
+  filter(responder == "responder") %>%
+  pairwise_wilcox_test(
+    formula = Oscillibacter.sp..57_20. ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######################
+###### Faecalibacterium
+#######################
+all.r %>%
+  ggplot(aes(x = Visite, y = NA.Faecalibacterium.species.incertae.sedis, fill = responder)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  scale_fill_manual(values = c("non-responder" = "#fc8d59", "responder" = "#998ec3")) +
+  geom_point(position = position_jitterdodge(jitter.width = 0), alpha=0.5, size = 3) +
+  boxplot.theme +
+  theme(legend.position = "top",
+        legend.title = element_blank())+
+  labs(y = "Faecali (counts)") -> fig.3.Faecali.responder
+fig.3.Faecali.responder
+
+##########
+### statistics
+##############
+#### statistics for chao 1 index
+all.r %>%
+  group_by(Visite) %>%
+  summarize(mean = mean(NA.Faecalibacterium.species.incertae.sedis),
+            sd = sd(NA.Faecalibacterium.species.incertae.sedis))
+
+complete_meta <- all.r %>% 
+  group_by(Probanden_ID) %>% 
+  filter(n() == 3) %>% 
+  ungroup()
+
+complete_meta %>% 
+  group_by(Visite) %>%
+  pairwise_wilcox_test(
+    formula = NA.Faecalibacterium.species.incertae.sedis ~ responder, 
+    paired = FALSE)
+
+######
+## non-responder
+#############
+complete_meta %>% 
+  filter(responder == "non-responder") %>%
+  pairwise_wilcox_test(
+    formula = NA.Faecalibacterium.species.incertae.sedis ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+######
+## responder
+#############
+complete_meta %>% 
+  filter(responder == "responder") %>%
+  pairwise_wilcox_test(
+    formula = NA.Faecalibacterium.species.incertae.sedis ~ Visite, 
+    paired = TRUE,
+    p.adjust.method = "BH")
+
+
+```
+## Correlation of features
+```{r}
+library(corrplot)
+library(Hmisc)
+delta.bmi <- bmi.total %>%
+  select(Probanden_ID, dif)
+
+class.data.new <- class.data.cluster %>%
+  left_join(delta.bmi, by = "Probanden_ID") %>%
+  rename("delta_BMI" = "dif")
+
+class.data.cluster.50 <- class.data.new
+
+# select feature for correlation matrix
+cor_features <- class.data.new %>% 
+  select(Oscillibacter.sp..57_20.,
+         NA.Faecalibacterium.species.incertae.sedis,
+         sys_mean,
+         ldl,
+         BMI) %>%
+  na.omit()
+
+
+cor_names <- cor_features
+colnames(cor_features) <- c("Oscilli sp.\n57_20", 
+  "Faecali sp.\nincertae sedis", 
+  "Sys BP", 
+  "LDL", 
+  "BMI"
+)
+
+cor_test_result <- rcorr(as.matrix(cor_features, type = "spearman"))  
+#the data might not be normal distributed
+
+print(cor_test_result$r)  
+print(cor_test_result$P) 
+cor_test_result$P[is.na(cor_test_result$P)] <- 1 #
+
+# Extract the correlation matrix (r) and p-value matrix (P)
+cor_matrix <- cor_test_result$r  
+p_matrix <- cor_test_result$P    
+
+
+# Plot the correlation matrix with significant correlations highlighted
+corrplot(cor_matrix, 
+         type = "upper",        
+         order = "hclust",       
+         p.mat = p_matrix,       
+         sig.level = 0.05,       
+         insig = "blank")        
+
+#svg("fig.3.corrplot.short.svg", width = 8, height = 8)
+corrplot(cor_matrix, 
+         type = "upper",         
+         order = "hclust",       
+         p.mat = p_matrix,       
+         sig.level = 0.05,       
+         insig = "blank",        
+         tl.col = "black",       
+         tl.srt = 45,            
+         tl.cex = 0.8,           
+         cl.cex = 0.8,           
+         addCoef.col = "black",  
+         number.cex = 0.7,       
+         col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(100), 
+         mar = c(0, 0, 1, 0))    
+dev.off()
+
+# other plot
+#svg("fig.3.corrplot.correlation.non.signifcant.svg", width = 8, height = 8)
+corrplot(cor_matrix, type = "upper", order = "hclust", 
+         tl.col = "black", tl.cex = 1.5, cl.cex = 1.3,
+         number.cex = 1.5)
+dev.off()
+```
+
+
+```{r}
+
+library(ggcorrplot)
+cor_matrix <- cor_test_result$r
+p_matrix <- cor_test_result$P
+p_matrix[is.na(p_matrix)] <- 1 
+
+# Plot
+fig.3.LEANER.heatmap <- ggcorrplot(cor_matrix,
+           method = "square",        
+           type = "upper",           
+           lab = TRUE,               # Show correlation numbers
+           lab_size = 6,             # Correlation number size (~24 pt)
+           colors = c("#0075DC", "white", "#E64B35FF"),  
+           tl.cex = 1.5,             # Axis label size (~24 pt)
+           legend.title = "Corr",    # Optional: set a custom legend title
+           ggtheme = theme_minimal(base_size = 24)) +  # Base text size 24
+  theme(legend.text = element_text(size = 20),
+        legend.title = element_text(size = 24),
+        axis.text.x = element_text(size = 24, color = "black"),
+        axis.text.y = element_text(size = 24, color = "black"),
+        plot.title = element_text(size = 24))
+
+fig.3.LEANER.heatmap
+```
+
+
+## Compare model containing clinical features and BMI with model including microbial features
+Does the microbiome add extra predictive information
+
+```{r}
+# ===============================
+# Compare short model (4 feats) vs. no-LDL (3 feats)
+# Same 100 resamples, inner 5-fold tuning, paired comparison
+# ===============================
+
+library(tidyverse)
+library(caret)
+library(pROC)
+library(randomForest)
+
+set.seed(2025)
+
+# ---- 0) Prepare data (same encoding as before) ----
+# Adjust names if needed to match your data frame
+short_features <- c("Oscillibacter.sp..57_20.",
+                    "NA.Faecalibacterium.species.incertae.sedis",
+                    "ldl", "sys_mean", "BMI")
+
+dat <- df %>%
+  mutate(
+    responder_mean = factor(
+      ifelse(as.character(responder_mean) %in% c("1", 1, "Responder"),
+             "Responder", "NonResponder"),
+      levels = c("Responder", "NonResponder")
+    )
+  ) %>%
+  select(all_of(c(short_features, "responder_mean"))) %>%
+  drop_na()
+
+# Define the 3-feature set (drop ldl)
+feat_clinical  <- c("ldl", "sys_mean", "BMI")
+
+feat_microbiome   <- c("Oscillibacter.sp..57_20.",
+                    "NA.Faecalibacterium.species.incertae.sedis",
+                    "sys_mean", "ldl", "BMI")
+
+# ---- 1) Common training control (inner 5-fold CV, optimize ROC) ----
+ctrl_inner <- trainControl(
+  method = "cv", number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final",
+  allowParallel = TRUE
+)
+
+rf_ntree <- 1000
+
+# Helper: make a tuning grid for a given #predictors p
+mk_grid <- function(p){
+  expand.grid(mtry = seq(1, min(p, floor(sqrt(p)) + 2), by = 1))
+}
+
+# ---- 2) Precompute SAME 100 stratified 80/20 splits (paired) ----
+B <- 100
+set.seed(4242)  # controls outer splits
+split_index <- vector("list", B)
+for(b in seq_len(B)){
+  split_index[[b]] <- createDataPartition(dat$responder_mean, p = 0.8, list = FALSE)
+}
+
+# ---- 3) Function to run the repeated CV for a given feature set ----
+run_repeated <- function(dat, feature_names, split_index, ctrl_inner, rf_ntree){
+  p <- length(feature_names)
+  rf_grid <- mk_grid(p)
+
+  metrics_list <- vector("list", length(split_index))
+
+  for(b in seq_along(split_index)){
+    tr_idx <- split_index[[b]]
+    tr <- dat[tr_idx, c(feature_names, "responder_mean")]
+    te <- dat[-tr_idx, c(feature_names, "responder_mean")]
+
+    fit_b <- train(
+      responder_mean ~ .,
+      data = tr,
+      method = "rf",
+      metric = "ROC",
+      trControl = ctrl_inner,
+      tuneGrid = rf_grid,
+      ntree = rf_ntree,
+      importance = TRUE
+    )
+
+    # Predict on held-out 20%
+    prob <- predict(fit_b, newdata = te, type = "prob")[, "Responder"]
+    pred <- factor(ifelse(prob >= 0.5, "Responder", "NonResponder"),
+                   levels = c("Responder","NonResponder"))
+
+    roc_b <- pROC::roc(response = te$responder_mean,
+                       predictor = prob,
+                       levels = c("NonResponder","Responder"),
+                       direction = "<")
+
+    cm <- caret::confusionMatrix(pred, te$responder_mean, positive = "Responder")
+
+    # Balanced accuracy, F1, MCC from confusion matrix parts
+    TP <- cm$table["Responder","Responder"]
+    TN <- cm$table["NonResponder","NonResponder"]
+    FP <- cm$table["Responder","NonResponder"]
+    FN <- cm$table["NonResponder","Responder"]
+
+    sens <- as.numeric(cm$byClass["Sensitivity"])
+    spec <- as.numeric(cm$byClass["Specificity"])
+    balacc <- mean(c(sens, spec), na.rm = TRUE)
+
+    precision <- ifelse((TP+FP) > 0, TP/(TP+FP), NA_real_)
+    recall    <- sens
+    F1 <- ifelse(is.na(precision) | is.na(recall) | (precision+recall)==0,
+                 NA_real_, 2*precision*recall/(precision+recall))
+
+    denom <- sqrt((TP+FP)*(TP+FN)*(TN+FP)*(TN+FN))
+    MCC <- ifelse(denom > 0, ((TP*TN)-(FP*FN))/denom, NA_real_)
+
+    metrics_list[[b]] <- tibble(
+      iter       = b,
+      AUC        = as.numeric(pROC::auc(roc_b)),
+      Accuracy   = as.numeric(cm$overall["Accuracy"]),
+      Sensitivity= sens,
+      Specificity= spec,
+      BalancedAccuracy = balacc,
+      F1         = F1,
+      MCC        = MCC,
+      Best_mtry  = fit_b$bestTune$mtry
+    )
+  }
+
+  bind_rows(metrics_list)
+}
+
+# ---- 4) Run both models on identical splits ----
+mc_clinical  <- run_repeated(dat, feat_clinical, split_index, ctrl_inner, rf_ntree)
+mc_microbiome    <- run_repeated(dat, feat_microbiome, split_index, ctrl_inner, rf_ntree)
+
+# ---- 5) Summaries (mean±SD and median [IQR]) for each ----
+summarize_perf <- function(df){
+  tibble(
+    AUC_mean = mean(df$AUC, na.rm=TRUE), AUC_sd = sd(df$AUC, na.rm=TRUE),
+    Acc_mean = mean(df$Accuracy, na.rm=TRUE), Acc_sd = sd(df$Accuracy, na.rm=TRUE),
+    Sens_mean= mean(df$Sensitivity, na.rm=TRUE), Sens_sd = sd(df$Sensitivity, na.rm=TRUE),
+    Spec_mean= mean(df$Specificity, na.rm=TRUE), Spec_sd = sd(df$Specificity, na.rm=TRUE),
+    BalAcc_mean = mean(df$BalancedAccuracy, na.rm=TRUE), BalAcc_sd = sd(df$BalancedAccuracy, na.rm=TRUE),
+    F1_mean = mean(df$F1, na.rm=TRUE), F1_sd = sd(df$F1, na.rm=TRUE),
+    MCC_mean = mean(df$MCC, na.rm=TRUE), MCC_sd = sd(df$MCC, na.rm=TRUE),
+    AUC_median = median(df$AUC, na.rm=TRUE),
+    AUC_IQR_L  = quantile(df$AUC, 0.25, na.rm=TRUE),
+    AUC_IQR_U  = quantile(df$AUC, 0.75, na.rm=TRUE)
+  )
+}
+
+sum_clinical <- summarize_perf(mc_clinical)
+sum_microbiome   <- summarize_perf(mc_microbiome)
+
+# Nicely formatted tables (mean ± SD)
+fmt_ms <- function(m, s) sprintf("%.2f ± %.2f", m, s)
+
+perf_microbiome <- tibble::tibble(
+  Metric = c("AUC","Accuracy","Sensitivity","Specificity","Balanced Accuracy","F1","MCC"),
+  Value  = c(
+    fmt_ms(sum_microbiome$AUC_mean, sum_microbiome$AUC_sd),
+    fmt_ms(sum_microbiome$Acc_mean, sum_microbiome$Acc_sd),
+    fmt_ms(sum_microbiome$Sens_mean, sum_microbiome$Sens_sd),
+    fmt_ms(sum_microbiome$Spec_mean, sum_microbiome$Spec_sd),
+    fmt_ms(sum_microbiome$BalAcc_mean, sum_microbiome$BalAcc_sd),
+    fmt_ms(sum_microbiome$F1_mean, sum_microbiome$F1_sd),
+    fmt_ms(sum_microbiome$MCC_mean, sum_microbiome$MCC_sd)
+  ),
+  Model = "Model Microbiome"
+)
+
+perf_clinical <- tibble::tibble(
+  Metric = c("AUC","Accuracy","Sensitivity","Specificity","Balanced Accuracy","F1","MCC"),
+  Value  = c(
+    fmt_ms(sum_clinical$AUC_mean, sum_clinical$AUC_sd),
+    fmt_ms(sum_clinical$Acc_mean, sum_clinical$Acc_sd),
+    fmt_ms(sum_clinical$Sens_mean, sum_clinical$Sens_sd),
+    fmt_ms(sum_clinical$Spec_mean, sum_clinical$Spec_sd),
+    fmt_ms(sum_clinical$BalAcc_mean, sum_clinical$BalAcc_sd),
+    fmt_ms(sum_clinical$F1_mean, sum_clinical$F1_sd),
+    fmt_ms(sum_clinical$MCC_mean, sum_clinical$MCC_sd)
+  ),
+  Model = "Model Clinical"
+)
+perf_microbiome
+perf_clinical
+
+bind_rows(perf_microbiome, perf_clinical)
+
+# ---- 6) Paired comparison: deltas per split (3 feats minus 4 feats) ----
+cmp <- mc_microbiome %>%
+  select(iter, AUC, Accuracy, Sensitivity, Specificity, BalancedAccuracy, F1, MCC) %>%
+  rename_with(~ paste0(.x, "_microbiome"), -iter) %>%
+  inner_join(
+    mc_clinical %>%
+      select(iter, AUC, Accuracy, Sensitivity, Specificity, BalancedAccuracy, F1, MCC) %>%
+      rename_with(~ paste0(.x, "_clinical"), -iter),
+    by = "iter"
+  ) %>%
+  mutate(
+    d_AUC  = AUC_microbiome  - AUC_clinical,
+    d_Acc  = Accuracy_microbiome - Accuracy_clinical,
+    d_Sens = Sensitivity_microbiome - Sensitivity_clinical,
+    d_Spec = Specificity_microbiome - Specificity_clinical,
+    d_BalAcc = BalancedAccuracy_microbiome - BalancedAccuracy_clinical,
+    d_F1   = F1_microbiome - F1_clinical,
+    d_MCC  = MCC_microbiome - MCC_clinical
+  )
+
+# Summary of differences (median [IQR] and mean ± SD)
+# helper to format quantiles with NA handling
+q25 <- function(x) quantile(x, 0.25, na.rm = TRUE)
+q75 <- function(x) quantile(x, 0.75, na.rm = TRUE)
+
+delta_summary <- tibble(
+  Metric = c("AUC","Accuracy","Sensitivity","Specificity","Balanced Accuracy","F1","MCC"),
+  MeanDiff   = c(mean(cmp$d_AUC,  na.rm=TRUE),
+                 mean(cmp$d_Acc,  na.rm=TRUE),
+                 mean(cmp$d_Sens, na.rm=TRUE),
+                 mean(cmp$d_Spec, na.rm=TRUE),
+                 mean(cmp$d_BalAcc, na.rm=TRUE),
+                 mean(cmp$d_F1,   na.rm=TRUE),
+                 mean(cmp$d_MCC,  na.rm=TRUE)),
+  SDDiff     = c(sd(cmp$d_AUC,  na.rm=TRUE),
+                 sd(cmp$d_Acc,  na.rm=TRUE),
+                 sd(cmp$d_Sens, na.rm=TRUE),
+                 sd(cmp$d_Spec, na.rm=TRUE),
+                 sd(cmp$d_BalAcc, na.rm=TRUE),
+                 sd(cmp$d_F1,   na.rm=TRUE),
+                 sd(cmp$d_MCC,  na.rm=TRUE)),
+  MedianDiff = c(median(cmp$d_AUC,  na.rm=TRUE),
+                 median(cmp$d_Acc,  na.rm=TRUE),
+                 median(cmp$d_Sens, na.rm=TRUE),
+                 median(cmp$d_Spec, na.rm=TRUE),
+                 median(cmp$d_BalAcc, na.rm=TRUE),
+                 median(cmp$d_F1,   na.rm=TRUE),
+                 median(cmp$d_MCC,  na.rm=TRUE)),
+  IQR_L      = c(q25(cmp$d_AUC),  q25(cmp$d_Acc),  q25(cmp$d_Sens),
+                 q25(cmp$d_Spec), q25(cmp$d_BalAcc), q25(cmp$d_F1), q25(cmp$d_MCC)),
+  IQR_U      = c(q75(cmp$d_AUC),  q75(cmp$d_Acc),  q75(cmp$d_Sens),
+                 q75(cmp$d_Spec), q75(cmp$d_BalAcc), q75(cmp$d_F1), q75(cmp$d_MCC)),
+  N_used     = c(sum(!is.na(cmp$d_AUC)),
+                 sum(!is.na(cmp$d_Acc)),
+                 sum(!is.na(cmp$d_Sens)),
+                 sum(!is.na(cmp$d_Spec)),
+                 sum(!is.na(cmp$d_BalAcc)),
+                 sum(!is.na(cmp$d_F1)),
+                 sum(!is.na(cmp$d_MCC)))
+) %>%
+  mutate(
+    `Mean ± SD`    = sprintf("%.03f ± %.03f", MeanDiff, SDDiff),
+    `Median [IQR]` = sprintf("%.03f [%.03f–%.03f]", MedianDiff, IQR_L, IQR_U)
+  ) %>%
+  select(Metric, `Mean ± SD`, `Median [IQR]`, N_used)
+
+
+########################
+### the microbiome adds extra positive value on the model even if we include BMI at baseline
+delta_summary
+```

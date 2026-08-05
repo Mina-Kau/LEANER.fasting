@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+
+# R / RStudio
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Quarto
+.quarto/
+*_cache/
+*_files/
+
+# Temporary files
+*.tmp
+*.log
+
+# Raw and processed data
+data/raw/
+data/processed/
+
+# Generated outputs
+results/
+figures/
+logs/
+
+# renv
+renv/library/
+renv/local/
+renv/python/
+renv/staging/

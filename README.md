@@ -1,23 +1,98 @@
-# LEANER Fasting Studies
+# LEANER Fasting Study
 
-## Project Abstract 
+Analysis pipeline for the **LEANER** randomized controlled trial investigating the effects of a 5-day prolonged fasting intervention on healthy adults.
 
-Abstract
-Background: Prolonged fasting may improve metabolic health, but controlled data in healthy adults with longer follow-up and multi-omics profiling are limited. We investigated the immediate and 12-week follow-up effects of a 5-day fasting intervention on body composition, gut microbiome, and circulating and fecal metabolites, and assessed whether baseline characteristics predict individual weight-loss response.
-Methods: In a randomized, waitlist-controlled trial, 38 healthy adults completed a 5-day fasting intervention with 12-week follow-up (LEANER study). Outcomes included body mass index and body composition, gut microbiome composition, and plasma and fecal metabolites. Changes over time and between groups were evaluated using regression-based models and paired non-parametric tests, as appropriate. Additionally, permutation-based multivariate testing was performed on microbiome and metabolome data. Twelve-week body weight response was predicted using data-driven machine learning with cross-validation, followed by external validation in three independent cohorts undergoing prolonged fasting protocols.
-Results: Fasting reduced body mass index acutely, predominantly driven by loss of fat mass, and these improvements partially persisted at 12 weeks. Fasting induced marked shifts in gut microbiome composition and in plasma and fecal metabolites. Post-fasting and longer-term changes in microbial diversity were associated with baseline microbiome diversity. A model combining baseline microbiome and clinical variables predicted body mass index response at 12 weeks; prominent predictors included an unclassified Faecalibacterium species, Oscillibacter sp. 50_27, low-density lipoprotein cholesterol, and systolic blood pressure. The model generalized to three independent cohorts, including individuals with metabolic syndrome, patients with multiple sclerosis exposed to repeated fasting, and healthy volunteers fasting for 6–12 days.
-Conclusions: In healthy adults, a 5-day prolonged fasting intervention produces robust short-term metabolic changes with partial persistence and consistent remodeling of the gut microbiome and metabolite profiles. Baseline microbiome and clinical characteristics can help stratify expected longer-term responses, supporting the development of individualized fasting-based interventions.
+This repository contains the analysis scripts used for the processing and statistical evaluation of clinical, microbiome, and metabolomics data generated during the study.
 
-Trial registration: ClinicalTrials.gov, NCT04452916. Prospectively registered on June 29, 2020. 
+**Project status:**  Under revision 
+
+---
+
+## Study overview
+
+The LEANER study investigated the short- and long-term effects of a 5-day fasting intervention in healthy adults.
+
+Main outcomes included:
+
+- Body composition
+- Clinical parameters
+- Gut microbiome composition
+- Plasma metabolomics
+- Fecal metabolomics
+
+In addition, baseline microbiome and clinical variables were used to develop machine learning models predicting long-term weight-loss response.
+
+---
+
+## Study design
+
+- Randomized, waitlist-controlled intervention study
+- 38 healthy participants
+- 5-day fasting intervention
+- 12-week follow-up
+- ClinicalTrials.gov: **NCT04452916**
+
+---
+
+## Repository structure
+
+```
+src/            Analysis scripts
+data/           Input data
+figures/        Final figures
+results/        Output tables and plots
+docs/           Project documentation
+logs/           Session information and logs
+```
+
+---
+
+## Analysis workflow
+
+1. Import and preprocess data
+2. Clinical data analysis
+3. Microbiome analysis
+4. Metabolomics analysis
+5. Multi-omics integration
+6. Machine learning
+7. Figure generation
+
+---
+
+## Data availability
+
+The datasets associated with this study are available via **Zenodo**.
+
+doi: https://doi.org/10.5281/zenodo.17493808). 
+
+---
+
+## Publication
+
+**Title:** *Machine Learning Identifies Microbiome and Clinical Predictors of Sustained Weight Loss Following Prolonged Fasting*
+
+**Status:** Under revision
 
 
-## Aim
 
-Investigate influence on fasting on healthy individuals on a multi-omics scale
+---
 
-## Structure
+## Software
 
-- src/ : analysis scripts
-- data/ : input data
-- figures/ : figures
-- results/ : output tables and plots
+This project uses
+
+- R
+- Quarto
+- renv (package version management)
+
+The computational environment can be restored using
+
+```r
+renv::restore()
+```
+
+---
+
+## Author
+
+Gelsomina Kaufhold

@@ -4,7 +4,7 @@ Analysis pipeline for the **LEANER** randomized controlled trial investigating t
 
 This repository contains the analysis scripts used for the processing and statistical evaluation of clinical, microbiome, and metabolomics data generated during the study.
 
-**Project status:**  Under revision 
+**Project status:** Published
 
 ---
 
@@ -69,9 +69,30 @@ doi: https://doi.org/10.5281/zenodo.17493808).
 
 ## Publication
 
-**Title:** *Machine Learning Identifies Microbiome and Clinical Predictors of Sustained Weight Loss Following Prolonged Fasting*
+**Title:** *Machine learning identifies microbiome and clinical predictors of sustained weight loss following prolonged fasting*
 
-**Status:** Under revision
+**Journal:** Genome Medicine, Volume 18, article number 136 (2026)
+
+**Published:** 16 September 2026 (open access)
+
+**DOI:** [10.1186/s13073-026-01765-0](https://doi.org/10.1186/s13073-026-01765-0)
+
+### How to cite
+
+> Kaufhold G, Bartolomaeus TUP, Schütte K, Schütte T, Kamboj S, Löber U, Rahn G, McParland V, Braun L, Markó L, Mammadli M, Krannich A, Bahr LS, Gutmann F, Paul F, Ducarmon QR, Zeller G, Mesnage R, Wilck N, Zernecke A, Oefner PJ, Gronwald W, Müller DN, Forslund-Startceva SK, Bähring S, Bartolomaeus H, Siebert N. Machine learning identifies microbiome and clinical predictors of sustained weight loss following prolonged fasting. *Genome Med*. 2026;18:136. https://doi.org/10.1186/s13073-026-01765-0
+
+```bibtex
+@article{Kaufhold2026,
+  author  = {Kaufhold, Gelsomina and Bartolomaeus, Theda U. P. and Sch{\"u}tte, Kristin and Sch{\"u}tte, Till and Kamboj, Sakshi and L{\"o}ber, Ulrike and Rahn, Gabriele and McParland, Victoria and Braun, Lena and Mark{\'o}, Lajos and Mammadli, Matanat and Krannich, Alexander and Bahr, Lina S. and Gutmann, Friederike and Paul, Friedemann and Ducarmon, Quinten R. and Zeller, Georg and Mesnage, Robin and Wilck, Nicola and Zernecke, Alma and Oefner, Peter J. and Gronwald, Wolfram and M{\"u}ller, Dominik N. and Forslund-Startceva, Sofia K. and B{\"a}hring, Sylvia and Bartolomaeus, Hendrik and Siebert, Nadja},
+  title   = {Machine learning identifies microbiome and clinical predictors of sustained weight loss following prolonged fasting},
+  journal = {Genome Medicine},
+  year    = {2026},
+  volume  = {18},
+  number  = {1},
+  pages   = {136},
+  doi     = {10.1186/s13073-026-01765-0}
+}
+```
 
 
 
